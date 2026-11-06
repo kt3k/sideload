@@ -44,12 +44,14 @@ sideload version                  バージョン表示（不具合報告用）
 |---|---|---|
 | `-d`, `--debug` | off | ログレベルを TRACE にする。install 失敗時の一次調査手段 |
 | `--thread-count <N>` | CPU コア数 | 署名の並列数。`1` を指定すると元実装の `--singlethread` と同じ動作 |
+| `--anisette-server <URL>` | なし | Anisette をリモートサーバー（anisette-v3 互換）から取得する。指定しなければローカルの ADI を使う |
 
 ### 環境変数
 
 | 変数 | 説明 |
 |---|---|
 | `SIDELOADER_CONFIG_DIR` | 設定ディレクトリを上書きする |
+| `SIDELOADER_ANISETTE_SERVER` | `--anisette-server` の既定値。オプションの指定が優先される |
 
 ## 共通の動作
 
@@ -72,7 +74,9 @@ sideload version                  バージョン表示（不具合報告用）
 
 ### ログイン（`version` 以外の全コマンド）
 
-1. ADI を初期化する。ライブラリが無ければ進捗（%）を表示しながらダウンロードする。
+1. Anisette を準備する。
+   - `--anisette-server` の指定なし: ローカルの ADI を初期化する。ライブラリが無ければ進捗（%）を表示しながらダウンロードする。
+   - 指定あり: そのサーバーを使う。ADI ライブラリはダウンロードしない。サーバーに接続できなければエラーにする。
 2. Apple ID を標準入力から読み、パスワードをエコーなしで読む。
 3. 2FA コードの入力を求める。`resend` と入力すると再送する。
 4. ログインできなければエラーを表示して終了コード 1 で終わる。
@@ -108,21 +112,65 @@ sideload version                  バージョン表示（不具合報告用）
 | `--udid <UDID>` | | 対象デバイス |
 | `--team <TeamID>` | | 使用するチーム（元実装には無く、追加する） |
 
+#### 動作モード（`--output` と `--dry-run` は同時に指定できない）
+
+| オプション | 説明 |
+|---|---|
+| `-o`, `--output <path>` | 署名までを行い、署名済み IPA を `<path>` に書き出す。デバイスへのインストールはしない（ステップ 8 を省略）。署名の問題と転送の問題を切り分けるのに使う |
+| `--dry-run` | Apple 側もデバイスも一切変更しない。ログインと読み取り系の API 呼び出しだけを行い、実行した場合の計画を表示する（後述） |
+
+#### アプリの加工
+
+| オプション | 説明 |
+|---|---|
+| `--strip-extensions` | `PlugIns/*.appex` と `Watch/` を削除してから処理する。必要な App ID は本体の 1 つだけになる |
+| `--bundle-id <id>` | 本体の Bundle ID に `<id>` をそのまま使う（`.<TeamID>` は付けない）。Extension は元の接頭辞を `<id>` に置き換える |
+| `--name <name>` | `CFBundleDisplayName` を `<name>` に書き換える |
+
+#### 証明書
+
+| オプション | 説明 |
+|---|---|
+| `--new-cert` | ステップ 3 で既存の証明書を再利用しない。マシン名が `Sideloader` の証明書をすべて失効させ、ローカルの `key.pem` を作り直して CSR を提出し直す。**失効させた証明書で署名済みのアプリは起動できなくなる**ため、実行前に失効させる証明書を表示する |
+
+#### デバッグ
+
+| オプション | 説明 |
+|---|---|
+| `--keep-temp` | 作業ディレクトリ（展開・加工・署名した `.app`）を削除せず、終了時にパスを表示する。失敗した場合も残す |
+
 ### 処理手順（進捗バーにステップ名を表示）
 
 | # | ステップ | 内容 | 主な失敗原因 → 使うデバッグコマンド |
 |---|---|---|---|
-| 0 | ログイン | 共通処理 | 認証失敗・2FA → `team list` |
-| 1 | チーム取得 | `--team` に従う | → `team list` |
-| 2 | デバイス登録 | 接続中デバイスの UDID が未登録なら、lockdown から端末名を取得して登録する | 登録上限 → `device list` / `device delete` |
-| 3 | 証明書の準備 | `keys/.../key.pem` があり、Apple 側にマシン名が `Sideloader` で公開鍵が一致する証明書があれば再利用する。無ければ鍵を生成（または既存の鍵を使用）して CSR を提出する | 証明書の上限 → `cert list` / `cert revoke` |
-| 4 | App ID 作成 | Bundle ID を `<元のID>.<TeamID>` に書き換える。Extension も同じ接頭辞で書き換える。不足する App ID の数が残り枠を超える場合は **1 つも登録せず** に中断し、最も早く期限が切れる日時を表示する | 枠不足 → `app-id list`（`app-id delete` しても枠は戻らない） |
-| 5 | App Group | 全 App ID で App Group を有効にし、`group.<mainAppId>` を作成または再利用する。SideStore（`com.SideStore.SideStore`）の場合は `ALTAppGroups` も設定する | `--debug` |
-| 6 | プロファイル取得 | 各 App ID に App Group を割り当て、**その App ID の**プロビジョニングプロファイルを取得する | `--debug` |
-| 7 | 署名 | 本体と Extension を署名する（`--thread-count` に従って並列化） | `--debug` |
-| 8 | インストール | AFC で `PublicStaging/<App名>.app` へ転送し、installation_proxy に `PackageType=Developer` を指定してインストールさせる | `--debug`、デバイス側の信頼設定 |
+| 0 | ログイン | 共通処理 | 認証失敗・2FA → `team list`、ADI が動かない → `--anisette-server` |
+| 1 | 展開・加工 | IPA を作業ディレクトリに展開し、`--strip-extensions` と `--name` を適用する | `--keep-temp` |
+| 2 | チーム取得 | `--team` に従う | → `team list` |
+| 3 | デバイス登録 | 対象デバイスの UDID が未登録なら、lockdown から端末名を取得して登録する。`--output` 指定時にデバイスが接続されておらず `--udid` も無い場合は、警告を出して省略する（プロファイルの対象は登録済みデバイスだけになる） | 登録上限 → `device list` / `device delete` |
+| 4 | 証明書の準備 | `keys/.../key.pem` があり、Apple 側にマシン名が `Sideloader` で公開鍵が一致する証明書があれば再利用する。無ければ鍵を生成（または既存の鍵を使用）して CSR を提出する。`--new-cert` 指定時の動作は上記のとおり | 証明書の上限 → `cert list` / `cert revoke` / `--new-cert` |
+| 5 | App ID 作成 | Bundle ID を `<元のID>.<TeamID>`（`--bundle-id` 指定時はその値）に書き換える。Extension も同じ接頭辞で書き換える。不足する App ID の数が残り枠を超える場合は **1 つも登録せず** に中断し、最も早く期限が切れる日時を表示する | 枠不足 → `app-id list` / `--strip-extensions`（`app-id delete` しても枠は戻らない） |
+| 6 | App Group | 全 App ID で App Group を有効にし、`group.<mainAppId>` を作成または再利用する。SideStore（`com.SideStore.SideStore`）の場合は `ALTAppGroups` も設定する | `--debug` |
+| 7 | プロファイル取得 | 各 App ID に App Group を割り当て、**その App ID の**プロビジョニングプロファイルを取得する | `--debug` |
+| 8 | 署名 | 本体と Extension を署名する（`--thread-count` に従って並列化） | `--debug` / `--keep-temp` |
+| 9 | インストール | AFC で `PublicStaging/<App名>.app` へ転送し、installation_proxy に `PackageType=Developer` を指定してインストールさせる。`--output` 指定時はこのステップの代わりに IPA を書き出す | `--output` で切り分け、デバイス側の信頼設定 |
 
 成功したら `Done.` を表示して終了コード 0 で終わる。
+
+### `--dry-run` の出力
+
+ステップ 1 は作業ディレクトリ内でだけ行い、ステップ 2 以降は読み取り系 API だけを呼ぶ。次の内容を表示する。
+
+```
+Team:         <name> (<teamId>)
+Device:       <udid> (registered | will be registered)
+Certificate:  reuse <serial> | will create new | will revoke <serial>, ... and create new
+App IDs:      need N, already registered M, will register K (available: A / max: X)
+  - <bundleId> (exists | new)
+App Group:    group.<mainAppId> (exists | new)
+Result:       OK | NG: <理由>
+```
+
+結果が NG の場合（App ID の枠不足、デバイスの登録上限など）は終了コード 1 で終わる。
 
 ---
 
@@ -183,10 +231,10 @@ You have <available> App IDs available out of the <max> you have at your disposa
 6. **`--singlethread` を廃止し `--thread-count 1` に統一する。** `--thread-count` の既定値は `uint.max` から CPU コア数に変える。
 7. **`device list` で接続中のデバイスも表示する**（登録漏れの調査用）。
 8. コマンド名を `sideloader` から `sideload` に変える（リポジトリ名に合わせる。要確認）。
+9. `install` にオプションを追加する: `--output`, `--dry-run`, `--keep-temp`, `--strip-extensions`, `--bundle-id`, `--name`, `--new-cert`。
+10. グローバルオプション `--anisette-server` を追加する（リモートの Anisette サーバーに対応）。
 
 ## 未決事項
 
 - [ ] 非対話環境（CI など）向けに、環境変数で Apple ID とパスワードを渡せるようにするか
-- [ ] Anisette をローカルの ADI だけにするか、リモートの Anisette サーバー（anisette-v3）も選べるようにするか
-- [ ] 署名だけ行い、インストールしないデバッグ手段（例: `install --output <signed.ipa>`）を用意するか
 - [ ] コマンド名は `sideload` と `sideloader` のどちらにするか
