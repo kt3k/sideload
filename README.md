@@ -5,8 +5,8 @@ Sideload iOS apps onto a USB-connected device with a free or paid Apple develope
 A reduced, corrected Rust port of the [Sideloader](https://github.com/Dadoum/Sideloader) CLI: an
 `install` command plus the diagnostic commands needed when installation fails.
 
-**Status:** scaffold. Argument parsing, configuration resolution, and argument validation work.
-Everything else is not implemented yet.
+**Status:** early. Argument parsing, configuration resolution, argument validation, and the
+format layer (plist XML/binary, ZIP, DER, JSON) work. Everything else is not implemented yet.
 
 - [SPEC.md](SPEC.md): behavior specification
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): module map, dependency policy, reference sources

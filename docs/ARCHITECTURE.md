@@ -19,7 +19,7 @@ organized and what it depends on.
 | | `device::{usbmuxd, lockdown, afc, installation_proxy, misagent}` | Device communication (SPEC 10) |
 | Artifact | `bundle` | IPA extraction, bundle rewriting (SPEC 11.1) |
 | | `sign` | Mach-O code signing (SPEC 11.2) |
-| Building blocks | `formats::{plist, zip, der, json}` | In-tree format code |
+| Building blocks | `formats::{plist, zip, der, json, base64, date}` | In-tree format code (implemented) |
 | | `crypto::{cbc, srp, rsa_keygen}` | Protocol crypto on vetted primitives |
 
 ## Dependency policy
@@ -41,7 +41,7 @@ Target set (33 crates including transitive dependencies on Linux, measured with 
 | `sha1`, `sha2` | Hashing for code signing (streaming) | `sign` |
 | `aes` | AES block cipher. The CBC mode is in-tree | `crypto::cbc` |
 | `num-bigint` | SRP and RSA key generation | `crypto::srp` |
-| `miniz_oxide` | Deflate | `formats::zip` |
+| `miniz_oxide` | Deflate | now (`formats::zip`) |
 | `rpassword` | Password input without echo | `credentials` |
 | `libc` | `mmap` / `mprotect` for local ADI (already transitive) | `anisette::local_adi` |
 

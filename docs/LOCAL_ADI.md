@@ -168,10 +168,13 @@ for this document; nothing was run.
 - Rust code size: an ELF64 loader with relocations, the hook table, and the ADI wrappers.
   Estimated at about 1,200 lines. Only `libc` is needed for `mmap` and `mprotect` (`VirtualAlloc`
   and `VirtualProtect` on Windows).
-- Rollout order:
+- Supported hosts (SPEC 9.1): Linux x86_64 / aarch64, macOS x86_64 / arm64, Windows x86_64.
+  Rollout order, with the remote provider covering every platform in the meantime:
   1. Linux x86_64 and aarch64.
-  2. Windows x86_64 (`extern "sysv64"` hooks and trampolines, CRT and `stat` shims).
-  3. macOS, only if there is demand.
-  The remote provider covers every platform in the meantime.
+  2. macOS x86_64 and arm64: `errno` hook and Linux `stat` conversion. On arm64, check two
+     things against the Darwin arm64 ABI: executable anonymous memory (`MAP_JIT` /
+     `pthread_jit_write_protect_np` may be required) and bionic's TLS layout (`tpidr_el0` slots
+     such as the stack guard), which macOS does not provide.
+  3. Windows x86_64: `extern "sysv64"` hooks and trampolines, CRT and `stat` shims.
 - Keep the upstream file layout (`<config>/lib/*.so`, `<config>/device.json`, and ADI state under
   `<config>`) so that a machine provisioned by Sideloader is reused as-is.

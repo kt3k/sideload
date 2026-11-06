@@ -546,6 +546,9 @@ Prints the version string. Performs neither login nor device communication.
 ### 9.1 Anisette Provider
 
 - Local ADI:
+  - MUST be supported on Linux (x86_64, aarch64), macOS (x86_64, arm64), and Windows (x86_64).
+    On any other host, the tool MUST fail with `anisette_unavailable` unless `--anisette-server` is
+    given, and the message MUST suggest `--anisette-server`.
   - If the ADI libraries are missing from the configuration directory, download them and show
     progress (%).
   - Fail with `adi_download_failed` when the download fails, and with `anisette_unavailable` when
