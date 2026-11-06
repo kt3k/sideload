@@ -10,8 +10,13 @@ license = "MIT"
 # Dependency budget: see docs/ARCHITECTURE.md. Add a crate only when the
 # module that needs it is implemented, and keep the transitive count small.
 [dependencies]
+aes = "0.8"
 lexopt = "0.3"
 miniz_oxide = "0.9.1"
+num-bigint = "0.4"
+num-integer = "0.1"
+num-traits = "0.2"
+ring = "0.17"
 
 [profile.release]
 lto = true
