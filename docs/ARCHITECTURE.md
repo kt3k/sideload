@@ -56,8 +56,13 @@ Target set (33 crates including transitive dependencies on Linux, measured with 
 
 ## Reference sources and licenses
 
-Code may be ported only from permissively or file-level licensed sources, and the license of the
-original MUST be kept where required.
+This project is MIT-licensed. Code may be ported only from MIT-compatible or file-level
+licensed sources:
+
+- MIT sources: keep the original copyright notice in the ported file.
+- MPL-2.0 sources: the ported file stays under MPL-2.0. Keep the MPL header in that file; the
+  rest of the project remains MIT.
+- GPL, LGPL, and unlicensed sources: behavior reference only; never copy code.
 
 | Source | License | Use |
 |---|---|---|

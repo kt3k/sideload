@@ -16,3 +16,8 @@ Everything else is not implemented yet.
 cargo build --release
 ./target/release/sideload --help
 ```
+
+## License
+
+MIT. Files ported from MPL-2.0 sources keep their MPL-2.0 notice (see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#reference-sources-and-licenses)).

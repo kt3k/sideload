@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 description = "Sideload iOS apps onto a device with a free or paid Apple developer account"
 repository = "https://github.com/kt3k/sideload"
+license = "MIT"
 
 # Dependency budget: see docs/ARCHITECTURE.md. Add a crate only when the
 # module that needs it is implemented, and keep the transitive count small.

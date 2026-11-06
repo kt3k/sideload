@@ -147,12 +147,31 @@ Headers on these requests:
 
 When Apple answers with `X-Apple-I-MD-DATA` (a resync request), call `Synchronize` and retry.
 
-## 7. Implications for this repository
+## 7. Platform support upstream
+
+Sideloader's CI (`.github/workflows/build-cli.yml`) builds the CLI for five targets, and Provision
+has a compatibility layer for each OS:
+
+| Host | Library ABI loaded | What Provision adds | Notes |
+|---|---|---|---|
+| Linux x86_64 | `x86_64` | nothing (same ABI and `stat` layout) | the reference platform |
+| Linux aarch64 | `arm64-v8a` | nothing | 16 KiB page kernels need the load shift (Section 2) |
+| Windows x86_64 | `x86_64` | System V trampoline for every call (`androidInvoke`), `sysv_abi` hooks, CRT shims, Linux `stat` conversion | source comment: "Works on a real Windows machine, but not Wine". Windows on ARM is not handled |
+| macOS x86_64 | `x86_64` | `errno` hook, Linux `stat` conversion | |
+| macOS arm64 | `arm64-v8a` | same as macOS x86_64 | built in CI; whether it runs reliably (Darwin arm64 ABI and memory-protection differences) is unverified |
+
+Being built in CI does not prove that a target works at runtime. Only the source code was read
+for this document; nothing was run.
+
+## 8. Implications for this repository
 
 - Rust code size: an ELF64 loader with relocations, the hook table, and the ADI wrappers.
-  Estimated at about 1,200 lines. Only `libc` is needed for `mmap` and `mprotect`.
-- Supported hosts in the first implementation: Linux x86_64 and aarch64. Windows x86_64 is
-  possible with `extern "sysv64"` and the CRT and `stat` shims (upstream does it). macOS should
-  prefer the remote provider unless there is demand.
+  Estimated at about 1,200 lines. Only `libc` is needed for `mmap` and `mprotect` (`VirtualAlloc`
+  and `VirtualProtect` on Windows).
+- Rollout order:
+  1. Linux x86_64 and aarch64.
+  2. Windows x86_64 (`extern "sysv64"` hooks and trampolines, CRT and `stat` shims).
+  3. macOS, only if there is demand.
+  The remote provider covers every platform in the meantime.
 - Keep the upstream file layout (`<config>/lib/*.so`, `<config>/device.json`, and ADI state under
   `<config>`) so that a machine provisioned by Sideloader is reused as-is.
