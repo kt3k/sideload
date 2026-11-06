@@ -145,7 +145,8 @@ Layout:
 #### 4.1.2 Credentials
 
 - `apple_id` (string)
-  - REQUIRED. Used exactly as entered (not normalized).
+  - REQUIRED. MUST be converted to lowercase before any use (the SRP username and the `Key ID`),
+    as upstream does.
 - `password` (string)
   - REQUIRED. MUST NOT be stored.
 - `two_factor_code` (string or null)
@@ -227,7 +228,7 @@ The plan `install` builds before making changes. `--dry-run` prints it and exits
 ### 4.2 Stable Identifiers and Normalization Rules
 
 - `Key ID`
-  - The SHA-1 hash of `apple_id`, as lowercase hexadecimal.
+  - The SHA-1 hash of the lowercased `apple_id`, as lowercase hexadecimal.
   - The key file path is `<config_dir>/keys/<key_id>/key.pem`.
 - `Main Bundle ID`
   - The value of `--bundle-id` when given.
