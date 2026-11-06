@@ -17,6 +17,8 @@ pub mod pipeline;
 pub mod anisette;
 pub mod apple;
 pub mod device;
+pub mod net;
+pub mod sidestore;
 
 // Artifact layer
 pub mod bundle;

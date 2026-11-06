@@ -14,7 +14,8 @@ use crate::{Error, ErrorCode, Result};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InstallArgs {
-    pub ipa: PathBuf,
+    /// `None` installs the latest SideStore release (SPEC Section 7.7).
+    pub ipa: Option<PathBuf>,
     pub udid: Option<String>,
     pub team: Option<String>,
     pub output: Option<PathBuf>,
@@ -307,7 +308,7 @@ fn parse_install(p: &mut lexopt::Parser) -> Result<Command> {
             other => return Err(usage_error(other.unexpected())),
         }
     }
-    a.ipa = ipa.ok_or_else(|| invalid(format!("missing argument <ipa>\n\n{}", help::INSTALL)))?;
+    a.ipa = ipa;
     if a.output.is_some() && a.dry_run {
         return Err(invalid("--output and --dry-run cannot be combined"));
     }
@@ -321,7 +322,7 @@ Sideload iOS apps onto a device with an Apple developer account.
 Usage: sideload [global options] <command>
 
 Commands:
-  install <ipa>              Install an IPA onto a device
+  install [<ipa>]            Install an IPA (default: latest SideStore)
 
   team list                  Check login and look up team IDs
   device list                Registered and connected devices
@@ -352,7 +353,10 @@ Environment:
     pub const INSTALL: &str = "\
 Install an IPA onto a device.
 
-Usage: sideload install <ipa> [options]
+Usage: sideload install [<ipa>] [options]
+
+Without <ipa>, the latest SideStore release is downloaded from GitHub
+(SideStore/SideStore) and installed.
 
 Options:
       --udid <UDID>        Target device
@@ -436,7 +440,7 @@ mod tests {
             "--keep-temp",
         ]);
         let Command::Install(a) = c else { panic!() };
-        assert_eq!(a.ipa, PathBuf::from("app.ipa"));
+        assert_eq!(a.ipa, Some(PathBuf::from("app.ipa")));
         assert_eq!(a.udid.as_deref(), Some("U"));
         assert_eq!(a.team.as_deref(), Some("T"));
         assert_eq!(a.output, Some(PathBuf::from("out.ipa")));
@@ -556,8 +560,16 @@ mod tests {
     #[test]
     fn missing_arguments() {
         assert_eq!(err_code(&[]), ErrorCode::InvalidArguments);
-        assert_eq!(err_code(&["install"]), ErrorCode::InvalidArguments);
         assert_eq!(err_code(&["cert", "revoke"]), ErrorCode::InvalidArguments);
+    }
+
+    #[test]
+    fn install_without_ipa_defaults_to_sidestore() {
+        let Command::Install(a) = cmd(&["install", "--udid", "U"]) else {
+            panic!()
+        };
+        assert_eq!(a.ipa, None);
+        assert_eq!(a.udid.as_deref(), Some("U"));
     }
 
     #[test]

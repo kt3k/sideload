@@ -4,6 +4,7 @@
 //! shared vocabulary (phases, modes) and the Install Plan.
 
 pub mod plan;
+pub mod workdir;
 
 use std::fmt;
 
@@ -12,8 +13,9 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     ValidatingArguments,
-    PreparingBundle,
     SelectingDevice,
+    DownloadingApp,
+    PreparingBundle,
     PreparingAnisette,
     LoggingIn,
     SelectingTeam,
@@ -33,6 +35,7 @@ impl Phase {
         use Phase::*;
         match self {
             ValidatingArguments => "ValidatingArguments",
+            DownloadingApp => "DownloadingApp",
             PreparingBundle => "PreparingBundle",
             SelectingDevice => "SelectingDevice",
             PreparingAnisette => "PreparingAnisette",

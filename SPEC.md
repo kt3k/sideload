@@ -123,6 +123,8 @@ To keep the tool easy to port, implementations are RECOMMENDED to use these laye
 - When using remote Anisette: an anisette-v3 compatible server.
 - usbmuxd (the usbmuxd daemon on Linux, built in on macOS, Apple Mobile Device Support on Windows).
 - A local filesystem for the configuration directory and the working directory.
+- When `install` is run without `<ipa>`: the GitHub REST API (`api.github.com`) and GitHub release
+  asset hosts (Section 7.7).
 
 ## 4. Core Domain Model
 
@@ -268,7 +270,7 @@ The executable name is Implementation-defined.
 ```text
 <cli> [global options] <command>
 
-<cli> install <ipa> [install options]     Install an IPA onto a device
+<cli> install [<ipa>] [install options]   Install an IPA (default: latest SideStore)
 
 # Diagnostics (Section 8)
 <cli> team list                           Check login and look up team IDs
@@ -298,7 +300,8 @@ Global options come before the subcommand.
 
 ### 5.4 Install Options
 
-- `<ipa>`: REQUIRED. Must pass the validation in Section 5.6.
+- `<ipa>`: OPTIONAL. When given, it must pass the validation in Section 5.6. When omitted, the
+  latest SideStore release is downloaded and installed (Section 7.7).
 - `--udid <UDID>`: Target device.
 - `--team <team_id>`: Team to use.
 - `-o`, `--output <path>`: Write the signed IPA instead of installing it.
@@ -324,7 +327,7 @@ Argument parsing failures also exit with `1`. Printing help (`--help`) exits wit
 
 The following MUST be validated before login or any device communication starts:
 
-- `<ipa>` exists, is a regular file, and has the `.ipa` extension → otherwise `ipa_not_found` /
+- When given, `<ipa>` exists, is a regular file, and has the `.ipa` extension → otherwise `ipa_not_found` /
   `ipa_invalid`.
 - `--output` and `--dry-run` are not both given → `invalid_arguments`.
 - The parent directory of the `--output` path exists → `output_write_failed`.
@@ -356,6 +359,11 @@ When both a CLI option and an environment variable are present, the CLI option M
   - Apple ID. When set, the tool does not prompt for the Apple ID.
 - `SIDELOADER_APPLE_PASSWORD`
   - Password. When set, the tool does not prompt for the password.
+- `HTTPS_PROXY` / `https_proxy`, `NO_PROXY` / `no_proxy`
+  - Standard proxy settings. They SHOULD be honored for every HTTPS connection (an `http://`
+    proxy reached with `CONNECT`).
+- `SSL_CERT_FILE`
+  - A PEM file of additional trust anchors (for TLS-intercepting proxies). It SHOULD be honored.
 
 An environment variable set to the empty string MUST be treated as unset.
 
@@ -399,24 +407,26 @@ Installation proceeds through the following phases in order. Phase names MUST be
 output and error reports.
 
 1. `ValidatingArguments`: Validation from Section 5.6.
-2. `PreparingBundle`: Extract the IPA into the working directory and apply `--strip-extensions`
+2. `SelectingDevice`: Choose the target device using the rules in Section 10.1.
+3. `DownloadingApp`: Only when `<ipa>` is omitted: download the latest SideStore release into the
+   working directory (Section 7.7).
+4. `PreparingBundle`: Extract the IPA into the working directory and apply `--strip-extensions`
    and `--name`.
-3. `SelectingDevice`: Choose the target device using the rules in Section 10.1.
-4. `PreparingAnisette`: Prepare the Anisette Provider.
-5. `LoggingIn`: Log in following Section 9.2.
-6. `SelectingTeam`: Choose the team using the rules in Section 9.3.
-7. `Planning`: Read Apple-side state and build the Install Plan. If `feasible = false`, fail here
+5. `PreparingAnisette`: Prepare the Anisette Provider.
+6. `LoggingIn`: Log in following Section 9.2.
+7. `SelectingTeam`: Choose the team using the rules in Section 9.3.
+8. `Planning`: Read Apple-side state and build the Install Plan. If `feasible = false`, fail here
    (in `DryRun`, print the plan first, then exit with code 1).
-8. `RegisteringDevice`: Register the device if needed.
-9. `PreparingCertificate`: Prepare the certificate using the rules in Section 7.3.
-10. `RegisteringAppIds`: Register missing App IDs.
-11. `ConfiguringAppGroup`: Enable App Groups on every App ID, create or reuse the App Group, and
+9. `RegisteringDevice`: Register the device if needed.
+10. `PreparingCertificate`: Prepare the certificate using the rules in Section 7.3.
+11. `RegisteringAppIds`: Register missing App IDs.
+12. `ConfiguringAppGroup`: Enable App Groups on every App ID, create or reuse the App Group, and
     assign it.
-12. `FetchingProfiles`: For each App ID, download that App ID's provisioning profile.
-13. `Signing`: Sign the main bundle and its extensions.
-14. `Delivering`: In `Install` mode, transfer to and install on the device (Section 10.3). In
+13. `FetchingProfiles`: For each App ID, download that App ID's provisioning profile.
+14. `Signing`: Sign the main bundle and its extensions.
+15. `Delivering`: In `Install` mode, transfer to and install on the device (Section 10.3). In
     `Output` mode, write the signed IPA.
-15. `CleaningUp`: Delete the working directory unless `--keep-temp` is given.
+16. `CleaningUp`: Delete the working directory unless `--keep-temp` is given.
 
 Terminal states:
 
@@ -425,7 +435,8 @@ Terminal states:
 - `Failed`: Print the error code and the failing phase, and exit with code 1.
 
 Failures that can be determined locally (arguments, the IPA, device selection) MUST be reported
-before credentials are requested. This is why phases 2 and 3 come before phase 5.
+before credentials are requested, and device selection before any download. This is why phases
+2 to 4 come before phase 6.
 
 ### 7.3 Certificate Preparation Rules
 
@@ -476,6 +487,32 @@ Result:       OK | NG: <error_code> <reason>
 - When an `install` that failed partway is re-run, it MUST be able to continue by reusing
   resources created by the previous run.
 - The key file MUST NOT be overwritten except by `--new-cert`.
+
+### 7.7 Default App: Latest SideStore Release
+
+When `install` is run without `<ipa>`, the tool installs the latest release of SideStore.
+
+1. Request `GET https://api.github.com/repos/SideStore/SideStore/releases/latest` with
+   `Accept: application/vnd.github+json` and a `User-Agent` naming the tool. This endpoint returns
+   the most recent non-prerelease, non-draft release.
+2. Select the asset whose `name` is exactly `SideStore.ipa`. If there is none, fail with
+   `download_failed` and name the release tag.
+3. Print the release tag (for example `Downloading SideStore 0.6.1...`).
+4. Download the asset's `browser_download_url`, following HTTPS redirects only, into the working
+   directory as `SideStore.ipa`. The download MUST fail with `download_failed` when:
+   - the response is not successful;
+   - the body exceeds 1 GiB;
+   - the asset metadata has a `size` and the body length differs;
+   - the asset metadata has a `digest` of the form `sha256:<hex>` and the SHA-256 of the body
+     differs.
+   When no `digest` is published, integrity relies on HTTPS alone. The tool SHOULD say so with
+   `--debug`.
+5. Continue with `PreparingBundle` on the downloaded file. Because the bundle identifier is
+   `com.SideStore.SideStore`, Section 11.1 applies (`ALTAppGroups`).
+
+The download is not cached; each run fetches the latest release again. In `DryRun` mode the
+download still happens (it changes nothing on the Apple side or on the device), so that the plan
+reflects the real bundle.
 
 ## 8. Diagnostic Commands
 
@@ -725,6 +762,7 @@ with `device_not_paired` and tell the user to choose "Trust This Computer" on th
 
 5. `Artifact Failures`
    - `signing_failed`
+   - `download_failed` (the default SideStore download in Section 7.7)
 
 6. `Unexpected Failures`
    - `internal_error` (an implementation defect; details are printed with `--debug`)
@@ -761,6 +799,9 @@ RECOMMENDED to include the relevant action.
   - Run `install --output` to sign only, isolating whether signing or transfer is the problem.
   - Inspect the signed bundle with `--keep-temp`.
   - Get detailed logs with `--debug`.
+- `download_failed`
+  - Check the network (and `HTTPS_PROXY`), or download `SideStore.ipa` manually and pass its
+    path as `<ipa>`.
 - To preview the outcome before running
   - `install --dry-run`.
 
@@ -806,7 +847,15 @@ the quota is insufficient.
 - When extracting the IPA, entries containing `..` or absolute paths, and symbolic links pointing
   outside the working directory, MUST be rejected (`ipa_invalid`).
 
-### 14.4 Destructive Operation Safety
+### 14.4 Downloaded Applications
+
+- The default download (Section 7.7) MUST use only the fixed repository `SideStore/SideStore`
+  and HTTPS for every request, including redirects.
+- A published SHA-256 digest MUST be verified before the file is used.
+- The downloaded file is treated like a user-supplied IPA: the extraction rules of Section 14.3
+  apply.
+
+### 14.5 Destructive Operation Safety
 
 - `install --new-cert` and `cert revoke` MUST print the certificates to be revoked before
   revoking them.
@@ -820,8 +869,9 @@ the quota is insufficient.
 ```text
 function install(args):
   validate_arguments(args)                          # ValidatingArguments
-  bundle = prepare_bundle(args.ipa, args)           # PreparingBundle
   target = select_device(args.udid, args.mode)      # SelectingDevice
+  ipa = args.ipa or download_latest_sidestore()     # DownloadingApp
+  bundle = prepare_bundle(ipa, args)                # PreparingBundle
 
   anisette = prepare_anisette(config)               # PreparingAnisette
   session = login(anisette, resolve_credentials())  # LoggingIn
@@ -992,6 +1042,8 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 - A re-run after a partial failure does not create duplicate resources.
 - The working directory is kept or removed according to `--keep-temp` (including on failure).
 - The IPA written by `--output` contains the signed bundle when extracted.
+- Without `<ipa>`: asset selection by exact name, failure when the asset is missing, size and
+  SHA-256 digest mismatches fail with `download_failed`, and redirects to plain HTTP are refused.
 
 ### 16.6 Diagnostic Commands
 
@@ -1024,6 +1076,7 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
   `--bundle-id`, `--name`, `--new-cert`, `--keep-temp`)
 - App ID quota pre-check (no partial registration)
 - Per-App-ID profile retrieval and signing
+- Installing the latest SideStore release when `<ipa>` is omitted (Section 7.7)
 - The diagnostic commands in Section 8
 - The error codes in Section 13.1 and the exit codes
 - Secret handling and filesystem safety in Section 14
@@ -1076,3 +1129,4 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 11. The executable name is Implementation-defined (upstream uses `sideloader`; this repository's
     implementation uses `sideload`).
 12. Errors are reported with an error code and the phase name.
+13. `install` without `<ipa>` downloads and installs the latest SideStore release from GitHub.

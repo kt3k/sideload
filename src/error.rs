@@ -41,6 +41,7 @@ pub enum ErrorCode {
     InstallFailed,
     // Artifact Failures
     SigningFailed,
+    DownloadFailed,
     // Unexpected Failures
     InternalError,
 }
@@ -77,6 +78,7 @@ impl ErrorCode {
             DeviceTransportError => "device_transport_error",
             InstallFailed => "install_failed",
             SigningFailed => "signing_failed",
+            DownloadFailed => "download_failed",
             InternalError => "internal_error",
         }
     }

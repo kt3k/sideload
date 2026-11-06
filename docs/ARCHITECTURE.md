@@ -14,8 +14,10 @@ organized and what it depends on.
 | Coordination | `commands::install` | Install pipeline phases (SPEC 7) |
 | | `commands::diagnostics` | `team` / `device` / `cert` / `app-id` (SPEC 8) |
 | | `pipeline` | Phase and Mode vocabulary, Install Plan |
-| Integration | `anisette::{remote_v3, local_adi}` | Anisette headers (SPEC 9.1, docs/LOCAL_ADI.md) |
-| | `apple::{http, gsa, developer}` | HTTPS, GrandSlam login, developerservices2 |
+| Integration | `net::http` | HTTPS client over rustls (proxy, redirects, extra CAs) |
+| | `sidestore` | Latest SideStore release from GitHub (SPEC 7.7) |
+| | `anisette::{remote_v3, local_adi}` | Anisette headers (SPEC 9.1, docs/LOCAL_ADI.md) |
+| | `apple::{gsa, developer}` | GrandSlam login, developerservices2 |
 | | `device::{usbmuxd, lockdown, afc, installation_proxy, misagent}` | Device communication (SPEC 10) |
 | Artifact | `bundle` | IPA extraction, bundle rewriting (SPEC 11.1) |
 | | `sign` | Mach-O code signing (SPEC 11.2) |
@@ -37,10 +39,9 @@ Target set (33 crates including transitive dependencies on Linux, measured with 
 | Crate | Purpose | Added when |
 |---|---|---|
 | `lexopt` | CLI parsing (no dependencies) | now |
-| `rustls` (ring, tls12) + `webpki-roots` | HTTPS and lockdown TLS. `ring` also provides HMAC, PBKDF2, AES-GCM, and RSA signing | `apple::http` |
-| `sha1`, `sha2` | Hashing for code signing (streaming) | `sign` |
-| `aes` | AES block cipher. The CBC mode is in-tree | `crypto::cbc` |
-| `num-bigint` | SRP and RSA key generation | `crypto::srp` |
+| `rustls` (ring, tls12) + `webpki-roots` | HTTPS and lockdown TLS. `ring` also provides SHA, HMAC, PBKDF2, RSA signing, and randomness | now (`net::http`, `crypto`) |
+| `aes` | AES block cipher. CBC and GCM (16-byte IVs) are in-tree | now (`crypto`) |
+| `num-bigint` (+ `num-integer`, `num-traits`) | SRP and RSA key generation | now (`crypto`) |
 | `miniz_oxide` | Deflate | now (`formats::zip`) |
 | `rpassword` | Password input without echo | `credentials` |
 | `libc` | `mmap` / `mprotect` for local ADI (already transitive) | `anisette::local_adi` |

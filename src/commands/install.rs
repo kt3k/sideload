@@ -5,7 +5,9 @@ use std::process::ExitCode;
 
 use crate::cli::InstallArgs;
 use crate::config::Settings;
+use crate::pipeline::workdir::WorkDir;
 use crate::pipeline::{Mode, Phase};
+use crate::sidestore;
 use crate::{Error, ErrorCode, Result};
 
 pub fn mode(args: &InstallArgs) -> Mode {
@@ -21,9 +23,22 @@ pub fn mode(args: &InstallArgs) -> Mode {
 pub fn run(args: &InstallArgs, _settings: &Settings) -> Result<ExitCode> {
     validate_arguments(args).map_err(|e| e.with_phase(Phase::ValidatingArguments))?;
     let _mode = mode(args);
+    let workdir = WorkDir::create(args.keep_temp)?;
 
-    // TODO: phases 2-15 (SPEC Section 7.2). Local-only phases
-    // (PreparingBundle, SelectingDevice) MUST run before LoggingIn.
+    // TODO: SelectingDevice (SPEC Section 10.1) runs before the download.
+
+    let _ipa = match &args.ipa {
+        Some(path) => path.clone(),
+        None => {
+            let client =
+                sidestore::http_client().map_err(|e| e.with_phase(Phase::DownloadingApp))?;
+            sidestore::download_latest(&client, workdir.path())
+                .map_err(|e| e.with_phase(Phase::DownloadingApp))?
+                .0
+        }
+    };
+
+    // TODO: remaining phases (SPEC Section 7.2).
     Err(Error::not_implemented("install").with_phase(Phase::PreparingBundle))
 }
 
@@ -31,7 +46,9 @@ pub fn run(args: &InstallArgs, _settings: &Settings) -> Result<ExitCode> {
 /// exclusivity and `--thread-count` are checked by the parser, the anisette
 /// URL by `Settings::resolve`).
 pub fn validate_arguments(args: &InstallArgs) -> Result<()> {
-    validate_ipa_path(&args.ipa)?;
+    if let Some(ipa) = &args.ipa {
+        validate_ipa_path(ipa)?;
+    }
     if let Some(output) = &args.output {
         let parent = match output.parent() {
             Some(p) if !p.as_os_str().is_empty() => p,
@@ -141,7 +158,7 @@ mod tests {
         let ipa = dir.0.join("a.ipa");
         std::fs::write(&ipa, b"").unwrap();
         let mut args = InstallArgs {
-            ipa,
+            ipa: Some(ipa),
             ..Default::default()
         };
 
