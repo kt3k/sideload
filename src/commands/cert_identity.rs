@@ -343,4 +343,109 @@ mod tests {
         );
         fs::remove_dir_all(&dir).unwrap();
     }
+
+    // ---- prepare() against a scripted Developer API (SPEC 7.3, 16.5) ----
+
+    use crate::commands::test_support::{Script, developer, dict};
+    use crate::formats::plist::Value;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn temp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("sideload-cert-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn listed_cert(serial: &str, machine: &str, content: &[u8]) -> Value {
+        Value::Dictionary(dict([
+            ("serialNumber", Value::from(serial)),
+            ("name", Value::from("cert")),
+            ("machineName", Value::from(machine)),
+            ("certificatePlatform", Value::from("ios")),
+            ("certContent", Value::Data(content.to_vec())),
+        ]))
+    }
+
+    fn test_cert_der() -> Vec<u8> {
+        crate::crypto::rsa_keygen::pem_decode(
+            include_str!("../sign/testdata/certificate.pem"),
+            "CERTIFICATE",
+        )
+        .unwrap()
+        .unwrap()
+    }
+
+    fn script_with_certs(certs: Vec<Value>) -> Rc<RefCell<Script>> {
+        let mut s = Script::default();
+        s.replies.insert(
+            "listAllDevelopmentCerts",
+            dict([("certificates", Value::Array(certs))]),
+        );
+        s.replies.insert(
+            "submitDevelopmentCSR",
+            dict([(
+                "certRequest",
+                Value::Dictionary(dict([("certRequestId", Value::from("R1"))])),
+            )]),
+        );
+        Rc::new(RefCell::new(s))
+    }
+
+    fn actions(script: &Rc<RefCell<Script>>) -> Vec<String> {
+        script.borrow().calls.iter().map(|c| c.0.clone()).collect()
+    }
+
+    #[test]
+    fn existing_key_reuses_matching_certificate_without_csr() {
+        let dir = temp("reuse");
+        let path = key_path(&dir, "a@b.c");
+        let pem = include_str!("../crypto/testdata/openssl_key.pem");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, pem).unwrap();
+        let script = script_with_certs(vec![listed_cert("S1", MACHINE_NAME, &test_cert_der())]);
+
+        prepare(&mut developer(&script), "TEAM", &dir, "a@b.c", false).unwrap();
+        assert_eq!(actions(&script), ["listAllDevelopmentCerts"]);
+        assert_eq!(fs::read_to_string(&path).unwrap(), pem, "key untouched");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn new_cert_revokes_every_sideloader_cert_then_replaces_the_key() {
+        let dir = temp("new-cert");
+        let path = key_path(&dir, "a@b.c");
+        let old = include_str!("../crypto/testdata/openssl_key.pem");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, old).unwrap();
+        let der = test_cert_der();
+        let script = script_with_certs(vec![
+            listed_cert("S1", MACHINE_NAME, &der),
+            listed_cert("X1", "Xcode", &der),
+            listed_cert("S2", MACHINE_NAME, &der),
+        ]);
+
+        // The mock never issues a certificate for the new key, so prepare
+        // ends with an error after the revocations and the CSR.
+        let err = prepare(&mut developer(&script), "TEAM", &dir, "a@b.c", true).unwrap_err();
+        assert!(err.message.contains("did not return"), "{}", err.message);
+
+        let calls = script.borrow().calls.clone();
+        let revoked: Vec<&str> = calls
+            .iter()
+            .filter(|c| c.0 == "revokeDevelopmentCert")
+            .map(|c| c.1.get("serialNumber").and_then(Value::as_str).unwrap())
+            .collect();
+        assert_eq!(revoked, ["S1", "S2"], "only Sideloader certificates");
+        let order = actions(&script);
+        let last_revoke = order.iter().rposition(|a| a == "revokeDevelopmentCert");
+        let csr = order.iter().position(|a| a == "submitDevelopmentCSR");
+        assert!(last_revoke < csr, "{order:?}");
+
+        let new = fs::read_to_string(&path).unwrap();
+        assert_ne!(new, old, "--new-cert replaces the key");
+        assert!(RsaPrivateKey::from_pem(&new).is_ok());
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

@@ -47,7 +47,20 @@ fn phase<T>(r: Result<T>, p: Phase) -> Result<T> {
 
 /// SPEC Section 10.1.
 fn select_device(udid: Option<&str>, mode: Mode) -> Result<Option<Target>> {
-    let connected = match Usbmuxd::connect().and_then(|mut m| m.list_devices()) {
+    select_from(
+        Usbmuxd::connect().and_then(|mut m| m.list_devices()),
+        udid,
+        mode,
+    )
+}
+
+/// SPEC Section 10.1, given usbmuxd's device list (or its failure).
+fn select_from(
+    listed: Result<Vec<crate::device::usbmuxd::UsbmuxdDevice>>,
+    udid: Option<&str>,
+    mode: Mode,
+) -> Result<Option<Target>> {
+    let connected = match listed {
         Ok(d) => d,
         // Install mode needs usbmuxd; report it as unreachable rather than
         // as "no device". Other modes can continue without a device.
@@ -726,72 +739,10 @@ mod tests {
 
     // ---- build_plan / provision_app_ids against a scripted Developer API ----
 
-    use crate::anisette::{AnisetteData, AnisetteProvider};
-    use crate::apple::gsa::Session;
+    use super::super::test_support::{Script, developer, dict};
     use crate::formats::plist::{Dictionary, Value};
-    use crate::net::NetResult;
-    use crate::net::http::{Request, Response};
     use std::cell::RefCell;
     use std::rc::Rc;
-
-    struct NoAnisette;
-    impl AnisetteProvider for NoAnisette {
-        fn headers(&mut self) -> Result<AnisetteData> {
-            Ok(AnisetteData::default())
-        }
-    }
-
-    /// Replies per Developer Services action; records (action, request).
-    #[derive(Default)]
-    struct Script {
-        replies: BTreeMap<&'static str, Dictionary>,
-        calls: Vec<(String, Value)>,
-    }
-    struct Wire(Rc<RefCell<Script>>);
-    impl Transport for Wire {
-        fn send(&mut self, r: &Request) -> NetResult<Response> {
-            let action = r
-                .url
-                .rsplit('/')
-                .next()
-                .unwrap()
-                .split(".action")
-                .next()
-                .unwrap()
-                .to_owned();
-            let body = crate::formats::plist::from_bytes(&r.body).unwrap();
-            let mut script = self.0.borrow_mut();
-            script.calls.push((action.clone(), body));
-            let mut reply = script
-                .replies
-                .get(action.as_str())
-                .cloned()
-                .unwrap_or_default();
-            reply.insert("resultCode", 0i64);
-            Ok(Response {
-                status: 200,
-                headers: Vec::new(),
-                body: Value::Dictionary(reply).to_xml(),
-                url: r.url.clone(),
-            })
-        }
-    }
-
-    fn dict<const N: usize>(e: [(&str, Value); N]) -> Dictionary {
-        e.into_iter().collect()
-    }
-
-    fn developer(script: &Rc<RefCell<Script>>) -> Developer<Wire> {
-        Developer::with_transport(
-            Session {
-                adsid: "1".into(),
-                token: "T".into(),
-                expiry: None,
-            },
-            Box::new(NoAnisette),
-            Wire(script.clone()),
-        )
-    }
 
     fn sample_app(dir: &Path) -> AppBundle {
         let path = dir.join("Payload/A.app");
@@ -883,6 +834,39 @@ mod tests {
     }
 
     #[test]
+    fn planning_writes_nothing() {
+        // --dry-run stops after Planning (SPEC 7.1): no key is generated or
+        // written, and only list calls reach Apple, with and without
+        // --new-cert.
+        for new_cert in [false, true] {
+            let dir = TempDir::new(&format!("plan-dry-{new_cert}"));
+            let app = sample_app(&dir.0);
+            let config = dir.0.join("config");
+            std::fs::create_dir_all(&config).unwrap();
+            let script = base_script(app_id(Some(10), &[]));
+            let plan = build_plan(
+                &mut developer(&script),
+                &team(),
+                None,
+                &app,
+                "com.example.a.TEAM",
+                &settings(&config),
+                "a@b.c",
+                new_cert,
+            )
+            .unwrap();
+            assert!(plan.feasible());
+            assert_eq!(
+                std::fs::read_dir(&config).unwrap().count(),
+                0,
+                "nothing written to the configuration directory"
+            );
+            let actions: Vec<String> = script.borrow().calls.iter().map(|c| c.0.clone()).collect();
+            assert!(actions.iter().all(|a| a.starts_with("list")), "{actions:?}");
+        }
+    }
+
+    #[test]
     fn exhausted_free_quota_blocks_without_changes() {
         let dir = TempDir::new("plan-free");
         let app = sample_app(&dir.0);
@@ -969,6 +953,74 @@ mod tests {
         assert_eq!(
             assign.1.get("appIdId").and_then(Value::as_str),
             Some("ID-com.example.a.TEAM")
+        );
+    }
+
+    // ---- device selection (SPEC Sections 10.1, 16.4) ----
+
+    fn usb(id: u32, udid: &str) -> crate::device::usbmuxd::UsbmuxdDevice {
+        crate::device::usbmuxd::UsbmuxdDevice {
+            device_id: id,
+            udid: udid.into(),
+            connection_type: "USB".into(),
+        }
+    }
+
+    fn pick(
+        listed: Result<Vec<crate::device::usbmuxd::UsbmuxdDevice>>,
+        udid: Option<&str>,
+        mode: Mode,
+    ) -> std::result::Result<Option<(String, Option<u32>)>, ErrorCode> {
+        select_from(listed, udid, mode)
+            .map(|t| t.map(|t| (t.udid, t.device_id)))
+            .map_err(|e| e.code)
+    }
+
+    #[test]
+    fn device_selection_matrix() {
+        let one = || Ok(vec![usb(7, "U1")]);
+        let two = || Ok(vec![usb(7, "U1"), usb(8, "U2")]);
+        let none = || Ok(vec![]);
+        for mode in [Mode::Install, Mode::Output, Mode::DryRun] {
+            // Exactly one connected: used in every mode.
+            assert_eq!(pick(one(), None, mode), Ok(Some(("U1".into(), Some(7)))));
+            // Two or more without --udid: always an error.
+            assert_eq!(
+                pick(two(), None, mode),
+                Err(ErrorCode::MultipleDevicesConnected)
+            );
+            // --udid picks among several.
+            assert_eq!(
+                pick(two(), Some("U2"), mode),
+                Ok(Some(("U2".into(), Some(8))))
+            );
+        }
+        // None connected.
+        assert_eq!(
+            pick(none(), None, Mode::Install),
+            Err(ErrorCode::NoDeviceConnected)
+        );
+        assert_eq!(pick(none(), None, Mode::Output), Ok(None));
+        assert_eq!(pick(none(), None, Mode::DryRun), Ok(None));
+        // --udid not connected: only Install fails; others use the UDID.
+        assert_eq!(
+            pick(one(), Some("U9"), Mode::Install),
+            Err(ErrorCode::DeviceNotConnected)
+        );
+        assert_eq!(
+            pick(one(), Some("U9"), Mode::DryRun),
+            Ok(Some(("U9".into(), None)))
+        );
+        // usbmuxd unreachable: Install reports it, other modes continue.
+        let down = || Err(Error::new(ErrorCode::DeviceTransportError, "down"));
+        assert_eq!(
+            pick(down(), None, Mode::Install),
+            Err(ErrorCode::DeviceTransportError)
+        );
+        assert_eq!(pick(down(), None, Mode::Output), Ok(None));
+        assert_eq!(
+            pick(down(), Some("U9"), Mode::Output),
+            Ok(Some(("U9".into(), None)))
         );
     }
 }

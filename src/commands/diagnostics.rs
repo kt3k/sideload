@@ -2,11 +2,14 @@
 //! Services operation, and prints a listing. `device list` also reports
 //! connected devices (SPEC Section 8.2).
 
+use std::fmt::Write as _;
 use std::process::ExitCode;
 
+use crate::apple::developer::{AppIds, Certificate, Device, Team};
 use crate::commands::cert_identity;
 use crate::commands::session::{authenticate, select_team};
 use crate::config::Settings;
+use crate::crypto::rsa_keygen::RsaPrivateKey;
 use crate::device::usbmuxd::{Usbmuxd, UsbmuxdDevice};
 use crate::formats::date::format_iso8601;
 use crate::{Error, ErrorCode, Result, output};
@@ -31,15 +34,21 @@ fn exactly_one<'a, T>(matches: Vec<&'a T>, nothing: ErrorCode, what: &str) -> Re
 pub fn team_list(settings: &Settings) -> Result<ExitCode> {
     let mut dev = authenticate(settings, false)?.dev;
     let teams = dev.list_teams()?;
-    println!("Teams:");
-    for team in &teams {
-        println!(
+    print!("{}", render_teams(&teams));
+    Ok(ExitCode::SUCCESS)
+}
+
+fn render_teams(teams: &[Team]) -> String {
+    let mut out = String::from("Teams:\n");
+    for team in teams {
+        let _ = writeln!(
+            out,
             " - `{}`, with ID `{}`.",
             team.name.as_deref().unwrap_or("(unnamed)"),
             team.team_id
         );
     }
-    Ok(ExitCode::SUCCESS)
+    out
 }
 
 /// Connected devices from usbmuxd; empty (not an error) if none or usbmuxd
@@ -63,13 +72,27 @@ pub fn device_list(
     let team = select_team(&mut dev, team.as_deref())?;
     let registered = dev.list_devices(&team.team_id)?;
     let connected = connected_devices();
-    let show = |u: &str| udid.as_deref().is_none_or(|want| want == u);
+    print!(
+        "{}",
+        render_devices(&registered, &connected, udid.as_deref())
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// SPEC Section 8.2.
+fn render_devices(
+    registered: &[Device],
+    connected: &[UsbmuxdDevice],
+    udid: Option<&str>,
+) -> String {
+    let mut out = String::new();
+    let show = |u: &str| udid.is_none_or(|want| want == u);
 
     // With --udid, print only lines about that device (SPEC Section 8.2).
     if udid.is_none() {
-        println!("You have {} devices registered.", registered.len());
+        let _ = writeln!(out, "You have {} devices registered.", registered.len());
     }
-    for d in &registered {
+    for d in registered {
         if !show(&d.udid) {
             continue;
         }
@@ -78,7 +101,8 @@ pub fn device_list(
         } else {
             ""
         };
-        println!(
+        let _ = writeln!(
+            out,
             " - Device `{}` of UDID `{}` with the identifier `{}`{mark}",
             d.name.as_deref().unwrap_or("(unnamed)"),
             d.udid,
@@ -90,12 +114,12 @@ pub fn device_list(
         .filter(|c| show(&c.udid) && !registered.iter().any(|r| r.udid == c.udid))
         .collect();
     if !unregistered.is_empty() {
-        println!("Connected devices not registered:");
+        let _ = writeln!(out, "Connected devices not registered:");
         for c in unregistered {
-            println!(" - `{}`", c.udid);
+            let _ = writeln!(out, " - `{}`", c.udid);
         }
     }
-    Ok(ExitCode::SUCCESS)
+    out
 }
 
 pub fn device_delete(
@@ -125,21 +149,27 @@ pub fn cert_list(settings: &Settings, team: Option<String>) -> Result<ExitCode> 
     // SPEC Section 8.4: mark the Matching Certificate (a Sideloader
     // Certificate whose public key matches this machine's key).
     let key = cert_identity::read_key_if_present(&settings.config_dir, &auth.apple_id);
-    println!("You have {} certificates registered.", certs.len());
-    for c in &certs {
+    print!("{}", render_certs(&certs, key.as_ref()));
+    Ok(ExitCode::SUCCESS)
+}
+
+/// SPEC Section 8.4.
+fn render_certs(certs: &[Certificate], key: Option<&RsaPrivateKey>) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "You have {} certificates registered.", certs.len());
+    for c in certs {
         let matching = c.machine_name.as_deref() == Some(cert_identity::MACHINE_NAME)
-            && key
-                .as_ref()
-                .is_some_and(|k| cert_identity::certificate_matches_key(c, k));
+            && key.is_some_and(|k| cert_identity::certificate_matches_key(c, k));
         let mine = if matching { " (this machine)" } else { "" };
-        println!(
+        let _ = writeln!(
+            out,
             " - `{}` with the serial number `{}`, from the machine named `{}`.{mine}",
             c.name.as_deref().unwrap_or("(unnamed)"),
             c.serial_number,
             c.machine_name.as_deref().unwrap_or("(unknown)"),
         );
     }
-    Ok(ExitCode::SUCCESS)
+    out
 }
 
 pub fn cert_revoke(settings: &Settings, team: Option<String>, serial: &str) -> Result<ExitCode> {
@@ -162,21 +192,34 @@ pub fn app_id_list(settings: &Settings, team: Option<String>) -> Result<ExitCode
     let mut dev = authenticate(settings, false)?.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let list = dev.list_app_ids(&team.team_id)?;
+    print!("{}", render_app_ids(&list));
+    Ok(ExitCode::SUCCESS)
+}
+
+/// SPEC Section 8.6.
+fn render_app_ids(list: &AppIds) -> String {
+    let mut out = String::new();
     match (list.available_quantity, list.max_quantity) {
         (Some(a), Some(m)) => {
-            println!("You have {a} App IDs available out of the {m} you have at your disposal.")
+            let _ = writeln!(
+                out,
+                "You have {a} App IDs available out of the {m} you have at your disposal."
+            );
         }
-        _ => println!("You have {} App IDs registered.", list.app_ids.len()),
+        _ => {
+            let _ = writeln!(out, "You have {} App IDs registered.", list.app_ids.len());
+        }
     }
     for a in &list.app_ids {
-        println!(
+        let _ = writeln!(
+            out,
             " - `{}` for the app `{}`, expiring on {}.",
             a.identifier,
             a.name,
             date(a.expiration_date),
         );
     }
-    Ok(ExitCode::SUCCESS)
+    out
 }
 
 pub fn app_id_delete(
@@ -197,4 +240,150 @@ pub fn app_id_delete(
     dev.delete_app_id(&team.team_id, &app_id_id)?;
     output::info("Done. (This does not restore your App ID quota.)");
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::apple::developer::AppId;
+    use crate::formats::plist::Dictionary;
+
+    fn device(id: &str, udid: &str) -> Device {
+        Device {
+            device_id: id.into(),
+            udid: udid.into(),
+            name: Some(format!("iPhone {id}")),
+            status: None,
+        }
+    }
+
+    fn usb(udid: &str) -> UsbmuxdDevice {
+        UsbmuxdDevice {
+            device_id: 1,
+            udid: udid.into(),
+            connection_type: "USB".into(),
+        }
+    }
+
+    #[test]
+    fn team_list_format() {
+        let teams = [Team {
+            team_id: "T1".into(),
+            name: Some("Me".into()),
+            kind: None,
+        }];
+        assert_eq!(render_teams(&teams), "Teams:\n - `Me`, with ID `T1`.\n");
+    }
+
+    #[test]
+    fn device_list_format() {
+        let registered = [device("D1", "U1"), device("D2", "U2")];
+        let connected = [usb("U1"), usb("U3")];
+        assert_eq!(
+            render_devices(&registered, &connected, None),
+            "You have 2 devices registered.\n\
+             \x20- Device `iPhone D1` of UDID `U1` with the identifier `D1` (connected)\n\
+             \x20- Device `iPhone D2` of UDID `U2` with the identifier `D2`\n\
+             Connected devices not registered:\n\
+             \x20- `U3`\n"
+        );
+        // --udid: only lines about that device.
+        assert_eq!(
+            render_devices(&registered, &connected, Some("U2")),
+            " - Device `iPhone D2` of UDID `U2` with the identifier `D2`\n"
+        );
+        assert_eq!(
+            render_devices(&registered, &connected, Some("U3")),
+            "Connected devices not registered:\n - `U3`\n"
+        );
+        // No device connected is not an error.
+        assert_eq!(
+            render_devices(&[], &[], None),
+            "You have 0 devices registered.\n"
+        );
+    }
+
+    #[test]
+    fn cert_list_marks_only_the_matching_certificate() {
+        let key =
+            RsaPrivateKey::from_pem(include_str!("../crypto/testdata/openssl_key.pem")).unwrap();
+        let der = crate::crypto::rsa_keygen::pem_decode(
+            include_str!("../sign/testdata/certificate.pem"),
+            "CERTIFICATE",
+        )
+        .unwrap()
+        .unwrap();
+        let cert = |serial: &str, machine: &str, content: Option<Vec<u8>>| Certificate {
+            platform: Some("ios".into()),
+            certificate_id: None,
+            serial_number: serial.into(),
+            name: Some("dev".into()),
+            machine_name: Some(machine.into()),
+            content,
+            expiration_date: None,
+        };
+        let certs = [
+            cert("S1", cert_identity::MACHINE_NAME, Some(der.clone())),
+            cert("S2", cert_identity::MACHINE_NAME, None),
+            cert("X1", "Xcode", Some(der)),
+        ];
+        let out = render_certs(&certs, Some(&key));
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "You have 3 certificates registered.");
+        assert!(lines[1].ends_with("(this machine)"), "{}", lines[1]);
+        assert!(
+            !lines[2].contains("(this machine)"),
+            "other Sideloader cert"
+        );
+        assert!(
+            !lines[3].contains("(this machine)"),
+            "same key, other machine"
+        );
+        // Without a local key nothing is marked.
+        assert!(!render_certs(&certs, None).contains("(this machine)"));
+    }
+
+    #[test]
+    fn app_id_list_format() {
+        let app_id = AppId {
+            app_id_id: "A".into(),
+            identifier: "com.example.a".into(),
+            name: "A".into(),
+            features: Dictionary::new(),
+            expiration_date: Some(0.0),
+        };
+        let free = AppIds {
+            app_ids: vec![app_id.clone()],
+            available_quantity: Some(9),
+            max_quantity: Some(10),
+        };
+        assert_eq!(
+            render_app_ids(&free),
+            "You have 9 App IDs available out of the 10 you have at your disposal.\n\
+             \x20- `com.example.a` for the app `A`, expiring on 1970-01-01T00:00:00Z.\n"
+        );
+        let paid = AppIds {
+            app_ids: vec![app_id],
+            available_quantity: None,
+            max_quantity: None,
+        };
+        assert!(render_app_ids(&paid).starts_with("You have 1 App IDs registered.\n"));
+    }
+
+    #[test]
+    fn exactly_one_match() {
+        let items = [1, 2, 2];
+        let find = |n: i32| {
+            exactly_one(
+                items.iter().filter(|&&i| i == n).collect(),
+                ErrorCode::AppIdNotFound,
+                "App ID",
+            )
+            .copied()
+            .map_err(|e| e.code)
+        };
+        assert_eq!(find(1), Ok(1));
+        assert_eq!(find(3), Err(ErrorCode::AppIdNotFound));
+        assert_eq!(find(2), Err(ErrorCode::AmbiguousMatch));
+    }
 }

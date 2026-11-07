@@ -5,6 +5,8 @@ pub mod deliver;
 pub mod diagnostics;
 pub mod install;
 pub mod session;
+#[cfg(test)]
+mod test_support;
 pub mod version;
 
 use std::process::ExitCode;

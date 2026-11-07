@@ -30,6 +30,21 @@ impl std::fmt::Debug for Credentials {
 }
 
 pub fn resolve(env: &dyn Env) -> Result<Credentials> {
+    resolve_with(
+        env,
+        std::io::stdin().is_terminal(),
+        &mut prompt_line,
+        &mut prompt_password,
+    )
+}
+
+/// `resolve` with the terminal check and prompts injected (for tests).
+fn resolve_with(
+    env: &dyn Env,
+    interactive: bool,
+    ask_line: &mut dyn FnMut(&str) -> Result<String>,
+    ask_password: &mut dyn FnMut(&str) -> Result<String>,
+) -> Result<Credentials> {
     let from_env = |key| {
         env.get_non_empty(key)
             .map(|v| v.to_string_lossy().into_owned())
@@ -37,7 +52,7 @@ pub fn resolve(env: &dyn Env) -> Result<Credentials> {
     let apple_id = from_env(ENV_APPLE_ID);
     let password = from_env(ENV_APPLE_PASSWORD);
 
-    if (apple_id.is_none() || password.is_none()) && !std::io::stdin().is_terminal() {
+    if (apple_id.is_none() || password.is_none()) && !interactive {
         return Err(Error::new(
             ErrorCode::CredentialsUnavailable,
             format!(
@@ -48,11 +63,11 @@ pub fn resolve(env: &dyn Env) -> Result<Credentials> {
 
     let apple_id = match apple_id {
         Some(v) => v,
-        None => prompt_line("Apple ID: ")?,
+        None => ask_line("Apple ID: ")?,
     };
     let password = match password {
         Some(v) => v,
-        None => prompt_password("Password: ")?,
+        None => ask_password("Password: ")?,
     };
     // Upstream lowercases the Apple ID before SRP and the key path (SPEC 4.1.2).
     Ok(Credentials {
@@ -178,5 +193,59 @@ mod tests {
         };
         let d = format!("{c:?}");
         assert!(d.contains("a@b.c") && !d.contains("hunter2"));
+    }
+
+    struct MapEnv(Vec<(&'static str, &'static str)>);
+    impl Env for MapEnv {
+        fn get(&self, key: &str) -> Option<std::ffi::OsString> {
+            self.0
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.into())
+        }
+    }
+
+    fn no_prompt(_: &str) -> Result<String> {
+        panic!("must not prompt")
+    }
+
+    #[test]
+    fn credentials_from_env_skip_prompts() {
+        let env = MapEnv(vec![
+            (ENV_APPLE_ID, "Me@Example.com"),
+            (ENV_APPLE_PASSWORD, "pw"),
+        ]);
+        let c = resolve_with(&env, false, &mut no_prompt, &mut no_prompt).unwrap();
+        assert_eq!(c.apple_id, "me@example.com");
+        assert_eq!(c.password(), "pw");
+    }
+
+    #[test]
+    fn missing_credentials_without_terminal_fail() {
+        // Only one variable set, and an empty one counts as unset.
+        for env in [
+            MapEnv(vec![(ENV_APPLE_ID, "me@example.com")]),
+            MapEnv(vec![
+                (ENV_APPLE_ID, "me@example.com"),
+                (ENV_APPLE_PASSWORD, ""),
+            ]),
+            MapEnv(vec![]),
+        ] {
+            let e = resolve_with(&env, false, &mut no_prompt, &mut no_prompt).unwrap_err();
+            assert_eq!(e.code, ErrorCode::CredentialsUnavailable);
+        }
+    }
+
+    #[test]
+    fn missing_credentials_are_prompted_on_a_terminal() {
+        let env = MapEnv(vec![(ENV_APPLE_ID, "me@example.com")]);
+        let mut asked = Vec::new();
+        let mut password = |p: &str| {
+            asked.push(p.to_owned());
+            Ok("secret".to_owned())
+        };
+        let c = resolve_with(&env, true, &mut no_prompt, &mut password).unwrap();
+        assert_eq!(c.password(), "secret");
+        assert_eq!(asked, ["Password: "]);
     }
 }
