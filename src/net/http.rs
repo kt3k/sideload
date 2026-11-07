@@ -746,6 +746,14 @@ mod proxy_tests {
             let mut reader = BufReader::new(stream);
             let mut line = String::new();
             reader.read_line(&mut line).unwrap();
+            // Read the rest of the head before replying, so the client is never
+            // still writing when the connection closes.
+            loop {
+                let mut header = String::new();
+                if reader.read_line(&mut header).unwrap() == 0 || header == "\r\n" {
+                    break;
+                }
+            }
             reader
                 .get_mut()
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")

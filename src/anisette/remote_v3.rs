@@ -159,7 +159,10 @@ impl std::fmt::Debug for RemoteV3 {
 }
 impl RemoteV3 {
     pub fn new(server: &str, config_dir: &Path) -> Result<Self> {
-        let client = Client::new(concat!("sideload/", env!("CARGO_PKG_VERSION")), &[])
+        // gsa.apple.com chains to the Apple Root CA, which is not in the
+        // Mozilla root set; Sideloader and isideload trust it explicitly too.
+        let apple_root = [crate::sign::apple_certs::ROOT_CA.to_vec()];
+        let client = Client::new(concat!("sideload/", env!("CARGO_PKG_VERSION")), &apple_root)
             .map_err(|_| unavailable("cannot initialize anisette TLS client"))?;
         Self::with_transport(server, config_dir, Box::new(Network(client)))
     }
