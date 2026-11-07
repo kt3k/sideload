@@ -16,7 +16,7 @@ organized and what it depends on.
 | | `pipeline` | Phase and Mode vocabulary, Install Plan |
 | Integration | `net::{http, websocket}` | HTTP/TLS and WebSocket clients (proxy, redirects, extra CAs) |
 | | `sidestore` | `install --sidestore`: latest SideStore release from GitHub (SPEC 7.7) |
-| | `anisette::{remote_v3, local_adi}` | Anisette headers (remote v3 implemented; local ADI pending) |
+| | `anisette::{remote_v3, local_adi}` | Anisette headers (remote v3; local: Android ADI on Linux/Windows, AOSKit on macOS) |
 | | `apple::{gsa, developer}` | GrandSlam login, developerservices2 |
 | | `device::{usbmuxd, lockdown, afc, installation_proxy, misagent}` | Device communication (SPEC 10) |
 | Artifact | `bundle` | IPA extraction, bundle rewriting (SPEC 11.1) |

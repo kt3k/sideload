@@ -192,7 +192,7 @@ A device currently visible through usbmuxd.
 - `features` (map): Includes whether App Groups are enabled.
 
 Listing App IDs also returns `available_quantity` (remaining quota) and `max_quantity` (quota
-limit).
+limit). Either MAY be absent (paid teams have no App ID quota); absent means unlimited.
 
 #### 4.1.8 App Group
 
@@ -243,10 +243,12 @@ The plan `install` builds before making changes. `--dry-run` prints it and exits
   - The new identifier is `<Main Bundle ID>` followed by the remainder of the original identifier
     after removing the main bundle's original identifier prefix.
 - `App ID Name`
-  - The bundle name with all non-alphanumeric characters removed. If the result is empty, use the
-    bundle identifier.
+  - The bundle name with every character other than ASCII letters and digits removed (Apple
+    rejects others). If the result is empty, use the bundle identifier reduced the same way.
 - `App Group ID`
-  - `group.<Main Bundle ID>`. Its name is `app group for <main App ID name>`.
+  - `group.<Main Bundle ID>`. Its name is `app group for <App ID Name of the main bundle>`.
+  - The Developer Service Client MAY remove characters Apple rejects from App ID and App Group
+    names before sending them.
 - `Sideloader Certificate`
   - A development certificate with `machine_name == "Sideloader"`.
 - `Matching Certificate`
@@ -418,8 +420,8 @@ output and error reports.
 2. `SelectingDevice`: Choose the target device using the rules in Section 10.1.
 3. `DownloadingApp`: Only with `--sidestore`: download the latest SideStore release into the
    working directory (Section 7.7).
-4. `PreparingBundle`: Extract the IPA into the working directory and apply `--strip-extensions`
-   and `--name`.
+4. `PreparingBundle`: Extract the IPA into the working directory, apply `--strip-extensions`
+   and `--name`, and check the extension bundle identifiers (Section 4.2).
 5. `PreparingAnisette`: Prepare the Anisette Provider.
 6. `LoggingIn`: Log in following Section 9.2.
 7. `SelectingTeam`: Choose the team using the rules in Section 9.3.
@@ -470,13 +472,14 @@ The CSR subject is Implementation-defined (upstream uses
 - The required App IDs are the bundle identifiers of the main bundle and of the extensions that
   remain after `--strip-extensions` is applied.
 - Those that do not match an already registered App ID form `app_ids_to_register`.
-- If `app_ids_to_register` exceeds `available_quantity`, the tool MUST NOT register any of them.
+- If `available_quantity` is present and `app_ids_to_register` exceeds it, the tool MUST NOT
+  register any of them.
   Fail with `app_id_quota_exceeded` and print the earliest `expiration_date` among the registered
   App IDs.
 
 ### 7.5 Dry-Run Plan Output
 
-In `DryRun` mode, print the plan in the following form when phase 7 completes. The exact line
+In `DryRun` mode, print the plan in the following form when phase 8 (`Planning`) completes. The exact line
 format is Implementation-defined, but every item MUST be included.
 
 ```text
@@ -484,6 +487,7 @@ Team:         <name> (<team_id>)
 Device:       <udid> (registered | will be registered | skipped)
 Certificate:  reuse <serial> | will create new | will revoke <serial>, ... and create new
 App IDs:      need N, already registered M, will register K (available: A / max: X)
+              (A and X are `unlimited` when the quota is absent)
   - <bundle_id> (exists | new)
 App Group:    group.<main_bundle_id> (exists | new)
 Result:       OK | NG: <error_code> <reason>
@@ -634,7 +638,8 @@ The Developer Service Client MUST provide at least the following operations, all
 
 - `list_teams()`
 - `list_devices(team)`, `add_device(team, name, udid)`, `delete_device(team, device_id)`
-- `list_development_certs(team)`, `submit_development_csr(team, csr_pem) -> certificate_id`,
+- `list_development_certs(team)`, `submit_development_csr(team, csr_pem)` (the issued
+  certificate is then found by its public key, Section 15.3),
   `revoke_development_cert(team, cert)`
 - `list_app_ids(team) -> {app_ids, available_quantity, max_quantity}`,
   `add_app_id(team, identifier, name)`, `update_app_id(team, app_id, features)`,
@@ -722,9 +727,10 @@ with `device_not_paired` and tell the user to choose "Trust This Computer" on th
 - Command results such as listings MUST go to standard output. Logs, progress, and errors MUST go
   to standard error.
 - The default log level is INFO or equivalent. `--debug` raises it to TRACE or equivalent.
-- `install` shows the names of the phases in Section 7.2 and the overall progress. When standard
-  error is not a terminal, it is RECOMMENDED to print one line per phase instead of a progress
-  bar.
+- `install` shows the names of the phases in Section 7.2 and the overall progress, for example
+  one line per phase such as `[8/16] Planning`. When standard error is not a terminal, it is
+  RECOMMENDED to print one line per phase instead of a progress bar. Phases that do not apply
+  (such as `DownloadingApp` without `--sidestore`) MAY be omitted.
 - Errors are printed as `error[<error_code>] (<phase>): <message>`. `<phase>` is included for
   `install` only.
 - With `--debug`, exception details (stack traces, summaries of HTTP requests and responses) MAY
@@ -935,13 +941,13 @@ function build_plan(session, team, target, bundle, args):
                    exists: any(a.identifier == b.bundle_identifier for a in listed.app_ids)}
                   for b in needed]
   plan.app_ids_to_register = count(x for x in plan.app_ids if not x.exists)
-  plan.available_quantity = listed.available_quantity
+  plan.available_quantity = listed.available_quantity    # null = unlimited
 
   groups = session.list_app_groups(team)
   group_id = "group." + bundle.bundle_identifier
   plan.app_group = {identifier: group_id, exists: any(g.identifier == group_id for g in groups)}
 
-  if plan.app_ids_to_register > plan.available_quantity:
+  if plan.available_quantity is not null and plan.app_ids_to_register > plan.available_quantity:
     plan.feasible = false
     plan.error = app_id_quota_exceeded(min(a.expiration_date for a in listed.app_ids))
   else:
@@ -972,8 +978,9 @@ function prepare_certificate(session, team, new_cert):
     key = generate_rsa_2048()
     write_private(key_path, key)
 
-  cert_id = session.submit_development_csr(team, make_csr(key))
-  cert = find(session.list_development_certs(team), certificate_id == cert_id)
+  session.submit_development_csr(team, make_csr(key))
+  cert = find(c in session.list_development_certs(team)
+              if c.machine_name == "Sideloader" and public_key(c.content) == public_key(key))
   return identity(cert, key)
 ```
 

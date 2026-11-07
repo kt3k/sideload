@@ -36,7 +36,8 @@ impl std::fmt::Debug for AnisetteData {
     }
 }
 
-/// Select the explicitly configured backend. Local ADI remains unimplemented.
+/// Selects the remote v3 backend when `--anisette-server` is set, otherwise
+/// the local backend for this host (SPEC Section 9.1).
 pub fn provider(settings: &crate::config::Settings) -> Result<Box<dyn AnisetteProvider>> {
     match &settings.anisette_server {
         Some(url) => Ok(Box::new(remote_v3::RemoteV3::new(

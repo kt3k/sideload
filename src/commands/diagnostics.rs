@@ -4,6 +4,7 @@
 
 use std::process::ExitCode;
 
+use crate::commands::cert_identity;
 use crate::commands::session::{authenticate, select_team};
 use crate::config::Settings;
 use crate::device::usbmuxd::{Usbmuxd, UsbmuxdDevice};
@@ -28,7 +29,7 @@ fn exactly_one<'a, T>(matches: Vec<&'a T>, nothing: ErrorCode, what: &str) -> Re
 }
 
 pub fn team_list(settings: &Settings) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?.dev;
+    let mut dev = authenticate(settings, false)?.dev;
     let teams = dev.list_teams()?;
     println!("Teams:");
     for team in &teams {
@@ -58,13 +59,16 @@ pub fn device_list(
     team: Option<String>,
     udid: Option<String>,
 ) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?.dev;
+    let mut dev = authenticate(settings, false)?.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let registered = dev.list_devices(&team.team_id)?;
     let connected = connected_devices();
     let show = |u: &str| udid.as_deref().is_none_or(|want| want == u);
 
-    println!("You have {} devices registered.", registered.len());
+    // With --udid, print only lines about that device (SPEC Section 8.2).
+    if udid.is_none() {
+        println!("You have {} devices registered.", registered.len());
+    }
     for d in &registered {
         if !show(&d.udid) {
             continue;
@@ -99,7 +103,7 @@ pub fn device_delete(
     team: Option<String>,
     device_id: &str,
 ) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?.dev;
+    let mut dev = authenticate(settings, false)?.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let devices = dev.list_devices(&team.team_id)?;
     let matches: Vec<_> = devices
@@ -114,16 +118,20 @@ pub fn device_delete(
 }
 
 pub fn cert_list(settings: &Settings, team: Option<String>) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?.dev;
+    let auth = authenticate(settings, false)?;
+    let mut dev = auth.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let certs = dev.list_development_certs(&team.team_id)?;
+    // SPEC Section 8.4: mark the Matching Certificate (a Sideloader
+    // Certificate whose public key matches this machine's key).
+    let key = cert_identity::read_key_if_present(&settings.config_dir, &auth.apple_id);
     println!("You have {} certificates registered.", certs.len());
     for c in &certs {
-        let mine = if c.machine_name.as_deref() == Some("Sideloader") {
-            " (this machine)"
-        } else {
-            ""
-        };
+        let matching = c.machine_name.as_deref() == Some(cert_identity::MACHINE_NAME)
+            && key
+                .as_ref()
+                .is_some_and(|k| cert_identity::certificate_matches_key(c, k));
+        let mine = if matching { " (this machine)" } else { "" };
         println!(
             " - `{}` with the serial number `{}`, from the machine named `{}`.{mine}",
             c.name.as_deref().unwrap_or("(unnamed)"),
@@ -135,7 +143,7 @@ pub fn cert_list(settings: &Settings, team: Option<String>) -> Result<ExitCode> 
 }
 
 pub fn cert_revoke(settings: &Settings, team: Option<String>, serial: &str) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?.dev;
+    let mut dev = authenticate(settings, false)?.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let certs = dev.list_development_certs(&team.team_id)?;
     let matches: Vec<_> = certs.iter().filter(|c| c.serial_number == serial).collect();
@@ -151,7 +159,7 @@ pub fn cert_revoke(settings: &Settings, team: Option<String>, serial: &str) -> R
 }
 
 pub fn app_id_list(settings: &Settings, team: Option<String>) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?.dev;
+    let mut dev = authenticate(settings, false)?.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let list = dev.list_app_ids(&team.team_id)?;
     match (list.available_quantity, list.max_quantity) {
@@ -176,7 +184,7 @@ pub fn app_id_delete(
     team: Option<String>,
     identifier: &str,
 ) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?.dev;
+    let mut dev = authenticate(settings, false)?.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let list = dev.list_app_ids(&team.team_id)?;
     let matches: Vec<_> = list

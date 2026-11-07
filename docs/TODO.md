@@ -20,3 +20,11 @@ Checked items have implementation and mock coverage; live validation is noted ex
 Install pipeline (all phases, dry-run plan, --output, device delivery), diagnostic commands (team/device/cert/app-id), device communication (usbmuxd, pairing records, lockdownd TLS session, AFC,
 installation_proxy, misagent), credential input (no-echo password, 2FA prompt), CLI, configuration, formats (plist, zip, DER, JSON), crypto, HTTPS/WebSocket client,
 `--sidestore` download, bundle processing, code signing, remote anisette v3.
+
+## Known gaps against SPEC
+
+- SPEC 9.5: with `--debug`, unparseable Apple responses are not logged yet (needs token
+  redaction per SPEC 14.2 first).
+- SPEC 9.1: Android ADI download progress shows only 0% and 100%.
+- SPEC 16: missing tests for exit codes, env-var credentials, device selection (no usbmuxd
+  seam), dry-run writing nothing, `--new-cert` end to end, and diagnostic output formats.

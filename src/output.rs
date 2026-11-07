@@ -6,6 +6,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::Error;
+use crate::pipeline::Phase;
 
 static DEBUG: AtomicBool = AtomicBool::new(false);
 
@@ -35,5 +36,9 @@ pub fn error(err: &Error) {
     eprintln!("{err}");
 }
 
-// TODO: progress reporting for `install` (phase name + overall percentage;
-// one line per phase when stderr is not a terminal).
+/// Announces the start of an `install` phase (SPEC Section 12): one line per
+/// phase with its position, e.g. `[8/16] Planning`. Phases that do not apply
+/// (such as `DownloadingApp` without `--sidestore`) are not announced.
+pub fn phase(p: Phase) {
+    eprintln!("[{}/{}] {}", p.number(), Phase::COUNT, p.as_str());
+}

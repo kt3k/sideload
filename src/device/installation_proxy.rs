@@ -55,13 +55,20 @@ impl<S: Read + Write> InstallationProxyClient<S> {
 
         loop {
             let reply = read_message_raw(&mut self.stream)?;
-            if let Some(desc) = reply.get("ErrorDescription").and_then(Value::as_str) {
-                let detail = reply.get("ErrorDetail").and_then(Value::as_str);
-                let err = reply
-                    .get("Error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("(none)");
-                return Err(install_err(match detail {
+            // Any of Error / ErrorDescription marks a failed install
+            // (SPEC Section 10.3); print whichever fields are present.
+            if reply.contains_key("Error") || reply.contains_key("ErrorDescription") {
+                let text = |k: &str| -> Option<String> {
+                    match reply.get(k)? {
+                        Value::String(s) => Some(s.clone()),
+                        Value::Integer(i) => Some(i.to_string()),
+                        _ => None,
+                    }
+                };
+                let err = text("Error").unwrap_or_else(|| "(none)".to_owned());
+                let desc =
+                    text("ErrorDescription").unwrap_or_else(|| "installation failed".to_owned());
+                return Err(install_err(match text("ErrorDetail") {
                     Some(d) => format!("{desc} [{err}: {d}]"),
                     None => format!("{desc} [{err}]"),
                 }));
@@ -190,5 +197,16 @@ mod tests {
         assert_eq!(err.code, ErrorCode::InstallFailed);
         assert!(err.message.contains("verify code signature"));
         assert!(err.message.contains("ApplicationVerificationFailed"));
+    }
+
+    #[test]
+    fn error_only_reply_is_install_failed() {
+        let replies = vec![reply(&[("Error", Value::from("APIInternalError"))])];
+        let mut client = InstallationProxyClient::new(Mock::new(replies));
+        let err = client
+            .install("PublicStaging/App.app", |_, _| {})
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InstallFailed);
+        assert!(err.message.contains("APIInternalError"));
     }
 }

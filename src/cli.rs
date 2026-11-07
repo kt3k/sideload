@@ -10,6 +10,7 @@ use lexopt::prelude::*;
 use crate::commands;
 use crate::config::{GlobalOptions, Os, ProcessEnv, Settings};
 use crate::output;
+use crate::pipeline::Phase;
 use crate::{Error, ErrorCode, Result};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -87,7 +88,14 @@ fn run(args: impl IntoIterator<Item = OsString>) -> Result<ExitCode> {
         return commands::version::run();
     }
     output::set_debug(inv.global.debug);
-    let settings = Settings::resolve(&inv.global, &ProcessEnv, Os::current())?;
+    let is_install = matches!(inv.command, Command::Install(_));
+    let settings = Settings::resolve(&inv.global, &ProcessEnv, Os::current()).map_err(|e| {
+        if is_install && e.phase.is_none() {
+            e.with_phase(Phase::ValidatingArguments)
+        } else {
+            e
+        }
+    })?;
     commands::dispatch(inv.command, &settings)
 }
 
@@ -291,7 +299,13 @@ fn team_and_positional(
     Ok(Ok((team, positional)))
 }
 
+/// Install argument errors belong to the `ValidatingArguments` phase
+/// (SPEC Sections 5.6, 7.2, 12).
 fn parse_install(p: &mut lexopt::Parser) -> Result<Command> {
+    parse_install_args(p).map_err(|e| e.with_phase(Phase::ValidatingArguments))
+}
+
+fn parse_install_args(p: &mut lexopt::Parser) -> Result<Command> {
     let mut a = InstallArgs::default();
     let mut ipa = None;
     while let Some(arg) = p.next().map_err(usage_error)? {

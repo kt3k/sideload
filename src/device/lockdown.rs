@@ -95,9 +95,33 @@ pub fn read_message_raw(r: &mut impl Read) -> Result<Dictionary> {
 pub fn read_message(r: &mut impl Read) -> Result<Dictionary> {
     let d = read_message_raw(r)?;
     if let Some(err) = d.get("Error").and_then(Value::as_str) {
-        return Err(transport_err(format!("device returned error `{err}`")));
+        return Err(lockdown_error(err));
     }
     Ok(d)
+}
+
+/// lockdownd errors meaning the device is locked or does not trust this
+/// computer (SPEC Section 10.1).
+const NOT_PAIRED_ERRORS: &[&str] = &[
+    "InvalidHostID",
+    "InvalidPairRecord",
+    "PasswordProtected",
+    "PairingDialogResponsePending",
+    "UserDeniedPairing",
+];
+
+fn lockdown_error(err: &str) -> Error {
+    if NOT_PAIRED_ERRORS.contains(&err) {
+        Error::new(
+            ErrorCode::DeviceNotPaired,
+            format!(
+                "device returned `{err}`: unlock the device and tap \"Trust This Computer\", \
+                 then try again"
+            ),
+        )
+    } else {
+        transport_err(format!("device returned error `{err}`"))
+    }
 }
 
 fn request<const N: usize>(entries: [(&str, Value); N]) -> Dictionary {
@@ -372,5 +396,21 @@ mod tests {
         // The host identity (self-signed test cert + its key) is accepted by
         // rustls; building the config must not error.
         assert!(tls_config(&record).is_ok());
+    }
+
+    #[test]
+    fn pairing_errors_map_to_device_not_paired() {
+        assert_eq!(
+            lockdown_error("PasswordProtected").code,
+            ErrorCode::DeviceNotPaired
+        );
+        assert_eq!(
+            lockdown_error("InvalidHostID").code,
+            ErrorCode::DeviceNotPaired
+        );
+        assert_eq!(
+            lockdown_error("SomethingElse").code,
+            ErrorCode::DeviceTransportError
+        );
     }
 }

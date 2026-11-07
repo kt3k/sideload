@@ -171,14 +171,7 @@ pub fn rewrite_bundle_ids(app: &mut AppBundle, new_main: &str) -> Result<String>
     fn walk(b: &mut AppBundle, original: &str, new_main: &str) -> Result<()> {
         for e in &mut b.extensions {
             let id = e.bundle_identifier()?.to_owned();
-            let suffix = id
-                .strip_prefix(original)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| {
-                    bundle_invalid(format!(
-                        "extension identifier `{id}` does not extend the main identifier `{original}`"
-                    ))
-                })?;
+            let suffix = extension_suffix(&id, original)?;
             e.info
                 .insert("CFBundleIdentifier", format!("{new_main}{suffix}"));
             // Watch apps name their companion app.
@@ -194,17 +187,47 @@ pub fn rewrite_bundle_ids(app: &mut AppBundle, new_main: &str) -> Result<String>
     Ok(original)
 }
 
-/// SPEC Section 4.2 `App ID Name`.
+/// SPEC Section 4.2 `App ID Name`: the bundle name reduced to ASCII
+/// alphanumerics (Apple rejects anything else), falling back to the bundle
+/// identifier reduced the same way.
 pub fn app_id_name(bundle_name: &str, bundle_id: &str) -> String {
-    let name: String = bundle_name
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .collect();
+    let keep = |s: &str| -> String { s.chars().filter(char::is_ascii_alphanumeric).collect() };
+    let name = keep(bundle_name);
     if name.is_empty() {
-        bundle_id.to_owned()
+        keep(bundle_id)
     } else {
         name
     }
+}
+
+/// SPEC Section 4.2: the App Group's name, `app group for <App ID name>`.
+pub fn app_group_name(main_app_id_name: &str) -> String {
+    format!("app group for {main_app_id_name}")
+}
+
+/// SPEC Section 4.2 `Extension Bundle ID`: every nested bundle's original
+/// identifier must extend the main bundle's. Checked while preparing the
+/// bundle, before any login (SPEC Section 7.2).
+pub fn validate_bundle_ids(app: &AppBundle) -> Result<()> {
+    let original = app.bundle_identifier()?.to_owned();
+    fn walk(b: &AppBundle, original: &str) -> Result<()> {
+        for e in &b.extensions {
+            extension_suffix(e.bundle_identifier()?, original)?;
+            walk(e, original)?;
+        }
+        Ok(())
+    }
+    walk(app, &original)
+}
+
+fn extension_suffix<'a>(id: &'a str, original: &str) -> Result<&'a str> {
+    id.strip_prefix(original)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            bundle_invalid(format!(
+                "extension identifier `{id}` does not extend the main identifier `{original}`"
+            ))
+        })
 }
 
 /// SPEC Section 4.2 `App Group ID`.
@@ -403,7 +426,8 @@ mod tests {
                 && !path.join("Watch").exists()
         );
         assert_eq!(app_id_name(&app.bundle_name(), "com.example.app"), "MyApp");
-        assert_eq!(app_id_name("!!!", "com.example.app"), "com.example.app");
+        assert_eq!(app_id_name("!!!", "com.example.app"), "comexampleapp");
+        assert_eq!(app_group_name("MyApp"), "app group for MyApp");
         assert_eq!(app_group_id("com.example.app.T"), "group.com.example.app.T");
         assert_eq!(main_bundle_id("a", "T", Some("custom.id")), "custom.id");
         fs::remove_dir_all(dir).unwrap();

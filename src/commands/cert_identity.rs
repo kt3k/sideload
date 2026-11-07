@@ -34,6 +34,12 @@ pub fn key_path(config_dir: &Path, apple_id: &str) -> PathBuf {
     config_dir.join("keys").join(id).join("key.pem")
 }
 
+/// Loads this account's signing key, if one exists and parses.
+pub fn read_key_if_present(config_dir: &Path, apple_id: &str) -> Option<RsaPrivateKey> {
+    let pem = fs::read_to_string(key_path(config_dir, apple_id)).ok()?;
+    RsaPrivateKey::from_pem(&pem).ok()
+}
+
 /// The RSA public key (PKCS#1 DER) inside a certificate's SubjectPublicKeyInfo.
 fn cert_public_key(cert_der: &[u8]) -> Option<Vec<u8>> {
     let mut r = der::Reader::new(cert_der);
@@ -166,13 +172,19 @@ pub fn prepare<T: Transport>(
     };
 
     let key = if new_cert {
+        // SPEC Section 14.5: list every certificate before revoking any.
         let existing = sideloader_certs(dev)?;
+        if !existing.is_empty() {
+            output::info("Revoking these certificates:");
+            for c in &existing {
+                output::info(format!(
+                    "  `{}` (serial {})",
+                    c.name.as_deref().unwrap_or("(unnamed)"),
+                    c.serial_number
+                ));
+            }
+        }
         for c in &existing {
-            output::info(format!(
-                "Revoking certificate `{}` (serial {}).",
-                c.name.as_deref().unwrap_or("(unnamed)"),
-                c.serial_number
-            ));
             dev.revoke_development_cert(team_id, &c.serial_number)?;
         }
         let key = RsaPrivateKey::generate(2048).map_err(|e| io_fail(e.to_string()))?;

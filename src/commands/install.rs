@@ -10,7 +10,6 @@ use crate::bundle::{self, AppBundle};
 use crate::cli::InstallArgs;
 use crate::commands::{cert_identity, deliver, session};
 use crate::config::Settings;
-use crate::crypto::rsa_keygen::RsaPrivateKey;
 use crate::device::usbmuxd::Usbmuxd;
 use crate::pipeline::plan::{
     CertificateAction, DeviceAction, InstallPlan, PlannedAppGroup, PlannedAppId,
@@ -50,8 +49,11 @@ fn phase<T>(r: Result<T>, p: Phase) -> Result<T> {
 fn select_device(udid: Option<&str>, mode: Mode) -> Result<Option<Target>> {
     let connected = match Usbmuxd::connect().and_then(|mut m| m.list_devices()) {
         Ok(d) => d,
+        // Install mode needs usbmuxd; report it as unreachable rather than
+        // as "no device". Other modes can continue without a device.
+        Err(e) if mode == Mode::Install => return Err(e),
         Err(e) => {
-            output::debug(format!("could not list connected devices: {e}"));
+            output::warn(format!("could not list connected devices: {e}"));
             Vec::new()
         }
     };
@@ -94,10 +96,12 @@ fn select_device(udid: Option<&str>, mode: Mode) -> Result<Option<Target>> {
 }
 
 pub fn run(args: &InstallArgs, settings: &Settings) -> Result<ExitCode> {
+    output::phase(Phase::ValidatingArguments);
     validate_arguments(args).map_err(|e| e.with_phase(Phase::ValidatingArguments))?;
     let mode = mode(args);
     let workdir = WorkDir::create(args.keep_temp)?;
 
+    output::phase(Phase::SelectingDevice);
     let target = phase(
         select_device(args.udid.as_deref(), mode),
         Phase::SelectingDevice,
@@ -105,6 +109,7 @@ pub fn run(args: &InstallArgs, settings: &Settings) -> Result<ExitCode> {
 
     // Obtain the IPA (download for --sidestore, otherwise the argument).
     let ipa = if args.sidestore {
+        output::phase(Phase::DownloadingApp);
         let client = sidestore::http_client().map_err(|e| e.with_phase(Phase::DownloadingApp))?;
         sidestore::download_latest(&client, workdir.path())
             .map_err(|e| e.with_phase(Phase::DownloadingApp))?
@@ -119,7 +124,9 @@ pub fn run(args: &InstallArgs, settings: &Settings) -> Result<ExitCode> {
         })?
     };
 
-    // Extract and adjust the bundle (SPEC Section 11.1).
+    // Extract and adjust the bundle (SPEC Section 11.1). Everything that can
+    // be checked locally is checked here, before credentials (SPEC 7.2).
+    output::phase(Phase::PreparingBundle);
     let app_dir = phase(
         bundle::ipa::extract(&ipa, workdir.path()),
         Phase::PreparingBundle,
@@ -131,20 +138,23 @@ pub fn run(args: &InstallArgs, settings: &Settings) -> Result<ExitCode> {
     if let Some(name) = &args.name {
         app.set_display_name(name);
     }
+    phase(bundle::validate_bundle_ids(&app), Phase::PreparingBundle)?;
     let original_main_id = phase(
         app.bundle_identifier().map(str::to_owned),
         Phase::PreparingBundle,
     )?;
 
-    // Log in and pick the team.
-    let auth = session::authenticate(settings, Some(Phase::LoggingIn))?;
+    // PreparingAnisette + LoggingIn, then pick the team.
+    let auth = session::authenticate(settings, true)?;
     let mut dev = auth.dev;
+    output::phase(Phase::SelectingTeam);
     let team = phase(
         session::select_team(&mut dev, args.team.as_deref()),
         Phase::SelectingTeam,
     )?;
 
     // Rewrite identifiers and build the plan (SPEC Sections 7.4, 15.2).
+    output::phase(Phase::Planning);
     let main_id =
         bundle::main_bundle_id(&original_main_id, &team.team_id, args.bundle_id.as_deref());
     phase(
@@ -178,6 +188,7 @@ pub fn run(args: &InstallArgs, settings: &Settings) -> Result<ExitCode> {
     }
 
     // RegisteringDevice (SPEC Section 10.2).
+    output::phase(Phase::RegisteringDevice);
     if let (Some(t), DeviceAction::Register) = (&target, &plan.device_action) {
         let name = device_name(t);
         phase(
@@ -187,6 +198,7 @@ pub fn run(args: &InstallArgs, settings: &Settings) -> Result<ExitCode> {
     }
 
     // PreparingCertificate (SPEC Section 7.3).
+    output::phase(Phase::PreparingCertificate);
     let identity = phase(
         cert_identity::prepare(
             &mut dev,
@@ -198,28 +210,26 @@ pub fn run(args: &InstallArgs, settings: &Settings) -> Result<ExitCode> {
         Phase::PreparingCertificate,
     )?;
 
-    // RegisteringAppIds + ConfiguringAppGroup + FetchingProfiles.
-    let profiles = phase(
-        provision_app_ids(
-            &mut dev,
-            &team.team_id,
-            &mut app,
-            &main_id,
-            &original_main_id,
-        ),
-        Phase::RegisteringAppIds,
+    // RegisteringAppIds, ConfiguringAppGroup and FetchingProfiles (each
+    // announced and tagged inside).
+    let profiles = provision_app_ids(
+        &mut dev,
+        &team.team_id,
+        &mut app,
+        &main_id,
+        &original_main_id,
     )?;
 
     // Persist Info.plist edits before signing (SPEC Section 11.1).
+    output::phase(Phase::Signing);
     phase(bundle::save_all(&app), Phase::Signing)?;
-
-    output::info("Signing...");
     let profile_map: BTreeMap<String, Vec<u8>> = profiles.clone();
     phase(
         crate::sign::sign_bundle(&app, &identity, &profile_map, settings.thread_count.get()),
         Phase::Signing,
     )?;
 
+    output::phase(Phase::Delivering);
     match mode {
         Mode::Output => {
             let out = args.output.as_ref().expect("Output mode has --output");
@@ -242,6 +252,10 @@ pub fn run(args: &InstallArgs, settings: &Settings) -> Result<ExitCode> {
         Mode::DryRun => unreachable!("handled above"),
     }
 
+    // CleaningUp: remove the working directory (or report it for
+    // --keep-temp) before declaring success.
+    output::phase(Phase::CleaningUp);
+    drop(workdir);
     output::info("Done.");
     Ok(ExitCode::SUCCESS)
 }
@@ -306,7 +320,7 @@ fn build_plan<T: Transport>(
     let available = listed.available_quantity.map(|a| a.max(0) as u32);
 
     // Certificate action: inspect the local key and the account's certs.
-    let key = read_key_if_present(settings, apple_id);
+    let key = cert_identity::read_key_if_present(&settings.config_dir, apple_id);
     let certs = dev.list_development_certs(&team.team_id)?;
     let sideloader: Vec<&developer::Certificate> = certs
         .iter()
@@ -354,12 +368,6 @@ fn build_plan<T: Transport>(
     })
 }
 
-fn read_key_if_present(settings: &Settings, apple_id: &str) -> Option<RsaPrivateKey> {
-    let path = cert_identity::key_path(&settings.config_dir, apple_id);
-    let pem = std::fs::read_to_string(path).ok()?;
-    RsaPrivateKey::from_pem(&pem).ok()
-}
-
 /// Registers missing App IDs, enables and assigns the App Group, and
 /// downloads each App ID's provisioning profile. Returns a map from bundle
 /// identifier to profile bytes.
@@ -376,30 +384,82 @@ fn provision_app_ids<T: Transport>(
         .map(|b| Ok((b.bundle_identifier()?.to_owned(), b.bundle_name())))
         .collect::<Result<_>>()?;
 
+    output::phase(Phase::RegisteringAppIds);
+    let (app_ids, main_name) = phase(
+        register_app_ids(dev, team_id, &needed, main_id),
+        Phase::RegisteringAppIds,
+    )?;
+
+    output::phase(Phase::ConfiguringAppGroup);
+    let group_id = bundle::app_group_id(main_id);
+    phase(
+        configure_app_group(dev, team_id, &needed, &app_ids, &group_id, &main_name),
+        Phase::ConfiguringAppGroup,
+    )?;
+
+    // SideStore reads its app group from ALTAppGroups (SPEC Section 11.1).
+    bundle::apply_sidestore_tweaks(app, original_main_id, &group_id);
+
+    output::phase(Phase::FetchingProfiles);
+    phase(
+        fetch_profiles(dev, team_id, &needed, &app_ids),
+        Phase::FetchingProfiles,
+    )
+}
+
+/// Registers the missing App IDs, then re-lists them to get each one's
+/// `appIdId` and features. Also returns the main App ID's name.
+fn register_app_ids<T: Transport>(
+    dev: &mut Developer<T>,
+    team_id: &str,
+    needed: &[(String, String)],
+    main_id: &str,
+) -> Result<(Vec<developer::AppId>, String)> {
     let existing = dev.list_app_ids(team_id)?;
-    for (identifier, name) in &needed {
+    let mut main_name = None;
+    for (identifier, name) in needed {
+        let app_id_name = bundle::app_id_name(name, identifier);
+        if identifier == main_id {
+            main_name = Some(app_id_name.clone());
+        }
         if !existing.app_ids.iter().any(|a| &a.identifier == identifier) {
             output::info(format!("Registering App ID {identifier}..."));
-            dev.add_app_id(team_id, identifier, &bundle::app_id_name(name, identifier))?;
+            dev.add_app_id(team_id, identifier, &app_id_name)?;
         }
     }
-
-    // Re-list to get appIdId and current features for every needed App ID.
     let app_ids = dev.list_app_ids(team_id)?.app_ids;
-    let group_id = bundle::app_group_id(main_id);
-    let group_name = format!("app group for {main_id}");
+    for (identifier, _) in needed {
+        if !app_ids.iter().any(|a| &a.identifier == identifier) {
+            return Err(Error::new(
+                ErrorCode::AppleApiError,
+                format!("App ID {identifier} missing after registration"),
+            ));
+        }
+    }
+    let main_name = main_name.unwrap_or_else(|| bundle::app_id_name("", main_id));
+    Ok((app_ids, main_name))
+}
 
+fn find_app_id<'a>(app_ids: &'a [developer::AppId], identifier: &str) -> &'a developer::AppId {
+    app_ids
+        .iter()
+        .find(|a| a.identifier == identifier)
+        .expect("checked by register_app_ids")
+}
+
+/// Enables App Groups on every App ID, creates or reuses the App Group,
+/// and assigns it to each App ID.
+fn configure_app_group<T: Transport>(
+    dev: &mut Developer<T>,
+    team_id: &str,
+    needed: &[(String, String)],
+    app_ids: &[developer::AppId],
+    group_id: &str,
+    main_app_id_name: &str,
+) -> Result<()> {
     // Enable the App Group feature on each App ID.
-    for (identifier, _) in &needed {
-        let app_id = app_ids
-            .iter()
-            .find(|a| &a.identifier == identifier)
-            .ok_or_else(|| {
-                Error::new(
-                    ErrorCode::AppleApiError,
-                    format!("App ID {identifier} missing after registration"),
-                )
-            })?;
+    for (identifier, _) in needed {
+        let app_id = find_app_id(app_ids, identifier);
         if app_id
             .features
             .get(developer::APP_GROUP_FEATURE)
@@ -425,38 +485,30 @@ fn provision_app_ids<T: Transport>(
         Some(g) => g,
         None => {
             output::info(format!("Creating App Group {group_id}..."));
-            dev.add_app_group(team_id, &group_id, &group_name)?
+            let name = bundle::app_group_name(main_app_id_name);
+            dev.add_app_group(team_id, group_id, &name)?
         }
     };
-    for (identifier, _) in &needed {
-        let app_id = app_ids
-            .iter()
-            .find(|a| &a.identifier == identifier)
-            .expect("checked above");
+    for (identifier, _) in needed {
+        let app_id = find_app_id(app_ids, identifier);
         dev.assign_app_group(team_id, &app_id.app_id_id, &group.application_group)?;
     }
+    Ok(())
+}
 
-    // SideStore reads its app group from ALTAppGroups (SPEC Section 11.1).
-    bundle::apply_sidestore_tweaks(app, original_main_id, &group_id);
-
-    // Download each App ID's own provisioning profile (SPEC Section 7, fix
-    // over upstream which reused the main profile everywhere).
+/// Downloads each App ID's own provisioning profile (SPEC Section 7; a fix
+/// over upstream, which reused the main profile everywhere).
+fn fetch_profiles<T: Transport>(
+    dev: &mut Developer<T>,
+    team_id: &str,
+    needed: &[(String, String)],
+    app_ids: &[developer::AppId],
+) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut profiles = BTreeMap::new();
-    for (identifier, _) in &needed {
-        let app_id = app_ids
-            .iter()
-            .find(|a| &a.identifier == identifier)
-            .expect("checked above");
+    for (identifier, _) in needed {
+        let app_id = find_app_id(app_ids, identifier);
         output::debug(format!("fetching profile for {identifier}"));
-        let profile = dev
-            .download_team_provisioning_profile(team_id, &app_id.app_id_id)
-            .map_err(|e| {
-                if e.phase.is_none() {
-                    e.with_phase(Phase::FetchingProfiles)
-                } else {
-                    e
-                }
-            })?;
+        let profile = dev.download_team_provisioning_profile(team_id, &app_id.app_id_id)?;
         profiles.insert(identifier.clone(), profile.encoded_profile);
     }
     Ok(profiles)

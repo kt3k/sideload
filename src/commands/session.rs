@@ -18,21 +18,33 @@ pub struct Authenticated {
 }
 
 /// Logs in and returns a Developer client sharing the login's transport and
-/// anisette provider. `phase` tags errors for `install`; diagnostics pass
-/// `None`.
-pub fn authenticate(settings: &Settings, phase: Option<Phase>) -> Result<Authenticated> {
-    let tag = |e: crate::Error| match phase {
-        Some(p) => e.with_phase(p),
-        None => e,
+/// anisette provider. For `install` (`for_install`), announces and tags the
+/// `PreparingAnisette` and `LoggingIn` phases; diagnostics pass `false`.
+pub fn authenticate(settings: &Settings, for_install: bool) -> Result<Authenticated> {
+    let tag = |p: Phase| {
+        move |e: crate::Error| {
+            if for_install && e.phase.is_none() {
+                e.with_phase(p)
+            } else {
+                e
+            }
+        }
     };
+    if for_install {
+        output::phase(Phase::PreparingAnisette);
+    }
+    let anisette = anisette::provider(settings).map_err(tag(Phase::PreparingAnisette))?;
 
-    let anisette = anisette::provider(settings).map_err(tag)?;
-    let creds = credentials::resolve(&ProcessEnv).map_err(tag)?;
-    let mut gsa = Gsa::new(anisette).map_err(tag)?;
+    if for_install {
+        output::phase(Phase::LoggingIn);
+    }
+    let login = tag(Phase::LoggingIn);
+    let creds = credentials::resolve(&ProcessEnv).map_err(login)?;
+    let mut gsa = Gsa::new(anisette).map_err(login)?;
     output::info(format!("Logging in as {}...", creds.apple_id));
     let session = gsa
         .login(&creds, credentials::prompt_two_factor_code)
-        .map_err(tag)?;
+        .map_err(login)?;
     Ok(Authenticated {
         dev: Developer::from_authenticated(session, gsa),
         apple_id: creds.apple_id.clone(),

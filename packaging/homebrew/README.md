@@ -33,5 +33,6 @@ opens a PR against the tap.)
 ## Notes
 
 - On macOS, usbmuxd is built in, so the formula needs no runtime dependency.
-- Local ADI is Linux-only; on macOS use `sideload --anisette-server <URL>`.
+- On macOS, local anisette uses the system AOSKit/AuthKit frameworks; if it fails, use
+  `sideload --anisette-server <URL>`.
 - Homebrew clears the download quarantine, so no `xattr` step is needed.

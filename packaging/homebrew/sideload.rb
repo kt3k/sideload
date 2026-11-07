@@ -24,8 +24,8 @@ class Sideload < Formula
         - macOS: built in, nothing to install
         - Linux: install usbmuxd
 
-      Local ADI (on-device anisette) is Linux-only. On macOS, pass a remote
-      anisette server: sideload --anisette-server <URL> ...
+      Anisette is generated locally with the system AOSKit/AuthKit frameworks.
+      If that fails, pass a remote server: sideload --anisette-server <URL> ...
     EOF
   end
 

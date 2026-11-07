@@ -31,6 +31,14 @@ pub enum Phase {
 }
 
 impl Phase {
+    /// Number of phases in SPEC Section 7.2.
+    pub const COUNT: usize = 16;
+
+    /// 1-based position in SPEC Section 7.2 (the enum is declared in order).
+    pub fn number(self) -> usize {
+        self as usize + 1
+    }
+
     pub fn as_str(self) -> &'static str {
         use Phase::*;
         match self {
@@ -66,4 +74,17 @@ pub enum Mode {
     Install,
     Output,
     DryRun,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Phase;
+
+    #[test]
+    fn phase_numbers_follow_spec_order() {
+        assert_eq!(Phase::ValidatingArguments.number(), 1);
+        assert_eq!(Phase::PreparingAnisette.number(), 5);
+        assert_eq!(Phase::Planning.number(), 8);
+        assert_eq!(Phase::CleaningUp.number(), Phase::COUNT);
+    }
 }
