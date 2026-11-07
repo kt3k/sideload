@@ -212,6 +212,7 @@ fn provisions_persists_reuses_and_refreshes_headers() {
     assert_eq!(header(&first, "X-Mme-Device-Id"), state.device_id());
     assert_eq!(header(&first, "X-Apple-I-TimeZone"), "UTC");
     assert_eq!(header(&first, "X-Apple-I-SRL-NO"), "0");
+    assert_eq!(header(&first, "User-Agent"), "akd/1.0");
     assert_eq!(
         base64::decode(field(&log.borrow().sent[0], "identifier").unwrap()).unwrap(),
         state.identifier

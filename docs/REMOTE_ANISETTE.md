@@ -22,7 +22,7 @@ No Apple ID, password, 2FA code, or login session is accepted by this API.
 
 Each `headers()` call posts to `/v3/get_headers` for a fresh OTP. The returned data contains
 machine/OTP/routing values plus the stable device UUID, SHA-256 local user identifier, client
-info, current UTC time, UTC timezone, locale, and default serial number `0`. Debug output
+info and its matching User-Agent, current UTC time, UTC timezone, locale, and default serial number `0`. Debug output
 contains header names only. Invalid replies and transport failures map to `anisette_unavailable`
 without including response bodies or provisioning secrets in errors.
 

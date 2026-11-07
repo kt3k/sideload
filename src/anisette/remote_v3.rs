@@ -475,6 +475,11 @@ impl RemoteV3 {
                     "X-Mme-Client-Info".into(),
                     self.info.as_ref().unwrap().description.clone(),
                 ),
+                // GSA expects the User-Agent that matches X-Mme-Client-Info.
+                (
+                    "User-Agent".into(),
+                    self.info.as_ref().unwrap().user_agent.clone(),
+                ),
                 ("X-Apple-I-Client-Time".into(), current_time()?),
                 ("X-Apple-I-TimeZone".into(), "UTC".into()),
                 ("X-Apple-Locale".into(), "en_US".into()),
