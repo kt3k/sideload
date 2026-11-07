@@ -2,6 +2,7 @@
 //! servers, GitHub releases).
 
 pub mod http;
+pub mod websocket;
 
 use std::fmt;
 

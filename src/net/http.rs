@@ -83,9 +83,10 @@ impl Response {
     }
 }
 
-/// Parsed `https://host[:port]/path?query`.
+/// Parsed `http(s)://host[:port]/path?query`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Url {
+    pub tls: bool,
     pub host: String,
     pub port: u16,
     pub path: String,
@@ -93,9 +94,15 @@ pub struct Url {
 
 impl Url {
     pub fn parse(url: &str) -> NetResult<Url> {
-        let rest = url.strip_prefix("https://").ok_or_else(|| {
-            NetError::transport(format!("only https:// URLs are supported: {url}"))
-        })?;
+        let (tls, rest) = if let Some(rest) = url.strip_prefix("https://") {
+            (true, rest)
+        } else if let Some(rest) = url.strip_prefix("http://") {
+            (false, rest)
+        } else {
+            return Err(NetError::transport(format!(
+                "only http:// and https:// URLs are supported: {url}"
+            )));
+        };
         let (authority, path) = match rest.find(['/', '?']) {
             Some(i) if rest.as_bytes()[i] == b'/' => (&rest[..i], rest[i..].to_owned()),
             Some(i) => (&rest[..i], format!("/{}", &rest[i..])),
@@ -105,30 +112,45 @@ impl Url {
         if authority.contains('@') {
             return Err(NetError::transport("credentials in URLs are not supported"));
         }
-        let (host, port) = split_host_port(authority, 443)?;
-        Ok(Url { host, port, path })
+        let (host, port) = split_host_port(authority, if tls { 443 } else { 80 })?;
+        Ok(Url {
+            tls,
+            host,
+            port,
+            path,
+        })
     }
 
     /// Resolves a `Location` header against this URL.
+    /// HTTPS URLs never redirect to plain HTTP.
     pub fn join(&self, location: &str) -> NetResult<String> {
+        let scheme = self.scheme();
         if location.starts_with("https://") {
             Ok(location.to_owned())
         } else if location.starts_with("http://") {
-            Err(NetError::transport(
-                "refusing to follow a redirect to plain HTTP",
-            ))
+            if self.tls {
+                Err(NetError::transport(
+                    "refusing to follow a redirect to plain HTTP",
+                ))
+            } else {
+                Ok(location.to_owned())
+            }
         } else if let Some(rest) = location.strip_prefix("//") {
-            Ok(format!("https://{rest}"))
+            Ok(format!("{scheme}://{rest}"))
         } else if location.starts_with('/') {
-            Ok(format!("https://{}{location}", self.authority()))
+            Ok(format!("{scheme}://{}{location}", self.authority()))
         } else {
             let base = &self.path[..self.path.rfind('/').map_or(0, |i| i + 1)];
-            Ok(format!("https://{}{base}{location}", self.authority()))
+            Ok(format!("{scheme}://{}{base}{location}", self.authority()))
         }
     }
 
-    fn authority(&self) -> String {
-        if self.port == 443 {
+    pub fn scheme(&self) -> &'static str {
+        if self.tls { "https" } else { "http" }
+    }
+
+    pub fn authority(&self) -> String {
+        if self.port == if self.tls { 443 } else { 80 } {
             self.host.clone()
         } else {
             format!("{}:{}", self.host, self.port)
@@ -231,14 +253,27 @@ impl Client {
         )))
     }
 
-    fn send_once(&self, req: &Request, url_str: &str) -> NetResult<Response> {
-        let url = Url::parse(url_str)?;
-        let tcp = connect(&url)?;
+    pub fn user_agent(&self) -> &str {
+        &self.user_agent
+    }
+
+    /// Opens a connection (TLS for `https`) to `url`'s host, through the
+    /// configured proxy if any. Used directly by the WebSocket client.
+    pub fn open(&self, url: &Url) -> NetResult<Stream> {
+        let tcp = connect(url)?;
+        if !url.tls {
+            return Ok(Stream::Plain(tcp));
+        }
         let server_name = ServerName::try_from(url.host.clone())
             .map_err(|_| NetError::transport(format!("invalid host name `{}`", url.host)))?;
         let conn = rustls::ClientConnection::new(self.config.clone(), server_name)
             .map_err(|e| NetError::transport(format!("TLS setup failed: {e}")))?;
-        let mut tls = rustls::StreamOwned::new(conn, tcp);
+        Ok(Stream::Tls(Box::new(rustls::StreamOwned::new(conn, tcp))))
+    }
+
+    fn send_once(&self, req: &Request, url_str: &str) -> NetResult<Response> {
+        let url = Url::parse(url_str)?;
+        let mut tls = self.open(&url)?;
 
         let mut head = format!(
             "{} {} HTTP/1.1\r\nHost: {}\r\n",
@@ -298,8 +333,44 @@ impl Client {
 
 // ---------------------------------------------------------------- connection and proxy
 
-fn proxy_for(host: &str) -> Option<String> {
-    let proxy = ["HTTPS_PROXY", "https_proxy"]
+/// A plain or TLS connection.
+pub enum Stream {
+    Plain(TcpStream),
+    Tls(Box<rustls::StreamOwned<rustls::ClientConnection, TcpStream>>),
+}
+
+impl Read for Stream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Stream::Plain(s) => s.read(buf),
+            Stream::Tls(s) => s.read(buf),
+        }
+    }
+}
+
+impl Write for Stream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Stream::Plain(s) => s.write(buf),
+            Stream::Tls(s) => s.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Stream::Plain(s) => s.flush(),
+            Stream::Tls(s) => s.flush(),
+        }
+    }
+}
+
+fn proxy_for(host: &str, tls: bool) -> Option<String> {
+    let names: [&str; 2] = if tls {
+        ["HTTPS_PROXY", "https_proxy"]
+    } else {
+        ["HTTP_PROXY", "http_proxy"]
+    };
+    let proxy = names
         .iter()
         .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))?;
     let no_proxy = ["NO_PROXY", "no_proxy"]
@@ -334,7 +405,7 @@ fn bypasses_proxy(host: &str, no_proxy: &str) -> bool {
 fn connect(url: &Url) -> NetResult<TcpStream> {
     let target = format!("{}:{}", url.host, url.port);
     let io = |e: std::io::Error| NetError::transport(format!("cannot connect to {target}: {e}"));
-    let stream = match proxy_for(&url.host) {
+    let stream = match proxy_for(&url.host, url.tls) {
         None => TcpStream::connect(&target).map_err(io)?,
         Some(proxy) => {
             let authority = proxy
@@ -386,7 +457,7 @@ fn read_line(r: &mut impl BufRead, budget: &mut usize) -> NetResult<String> {
     String::from_utf8(line).map_err(|_| NetError::transport("non-UTF-8 response header"))
 }
 
-fn read_head(r: &mut impl BufRead) -> NetResult<(u16, Vec<(String, String)>)> {
+pub(crate) fn read_head(r: &mut impl BufRead) -> NetResult<(u16, Vec<(String, String)>)> {
     let mut budget = MAX_HEADER_BYTES;
     loop {
         let status_line = read_line(r, &mut budget)?;
@@ -482,6 +553,7 @@ mod tests {
         assert_eq!(
             Url::parse("https://API.github.com/repos/x?y=1#frag").unwrap(),
             Url {
+                tls: true,
                 host: "api.github.com".into(),
                 port: 443,
                 path: "/repos/x?y=1".into()
@@ -490,19 +562,24 @@ mod tests {
         assert_eq!(
             Url::parse("https://h:8443").unwrap(),
             Url {
+                tls: true,
                 host: "h".into(),
                 port: 8443,
                 path: "/".into()
             }
         );
         assert_eq!(Url::parse("https://h?q").unwrap().path, "/?q");
-        for bad in [
-            "http://h/",
-            "ftp://h",
-            "https://",
-            "https://u:p@h/",
-            "https://h:x/",
-        ] {
+        let plain = Url::parse("http://localhost:6969/v3").unwrap();
+        assert!(!plain.tls);
+        assert_eq!(
+            (plain.port, plain.authority()),
+            (6969, "localhost:6969".to_owned())
+        );
+        assert_eq!(Url::parse("http://h/").unwrap().port, 80);
+        // Plain HTTP may redirect anywhere; HTTPS never downgrades.
+        assert_eq!(plain.join("/x").unwrap(), "http://localhost:6969/x");
+        assert!(plain.join("http://other/").is_ok());
+        for bad in ["ftp://h", "https://", "https://u:p@h/", "https://h:x/"] {
             assert!(Url::parse(bad).is_err(), "{bad}");
         }
     }
