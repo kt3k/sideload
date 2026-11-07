@@ -15,9 +15,9 @@ implemented elsewhere; the assistant can still review, test, and fix them afterw
 
 - [ ] Install pipeline wiring and dry-run plan output (SPEC 7)
 - [ ] Diagnostic commands wiring (SPEC 8)
-- [ ] Device communication (`src/device/`, SPEC 10)
 
 ## Done
 
-Credential input (no-echo password, 2FA prompt), CLI, configuration, formats (plist, zip, DER, JSON), crypto, HTTPS/WebSocket client,
+Device communication (usbmuxd, pairing records, lockdownd TLS session, AFC,
+installation_proxy, misagent), credential input (no-echo password, 2FA prompt), CLI, configuration, formats (plist, zip, DER, JSON), crypto, HTTPS/WebSocket client,
 `--sidestore` download, bundle processing, code signing, remote anisette v3.

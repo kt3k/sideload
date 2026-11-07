@@ -72,8 +72,10 @@ pub fn write_message(w: &mut impl Write, body: &Dictionary) -> Result<()> {
     Ok(())
 }
 
-/// Reads one length-prefixed plist message.
-pub fn read_message(r: &mut impl Read) -> Result<Dictionary> {
+/// Reads one length-prefixed plist message, without interpreting its fields.
+/// Used directly by services (installation_proxy, misagent) that give their
+/// own meaning to `Error`.
+pub fn read_message_raw(r: &mut impl Read) -> Result<Dictionary> {
     let mut len_bytes = [0u8; 4];
     r.read_exact(&mut len_bytes).map_err(transport_err)?;
     let len = u32::from_be_bytes(len_bytes);
@@ -83,14 +85,19 @@ pub fn read_message(r: &mut impl Read) -> Result<Dictionary> {
     let mut body = vec![0u8; len as usize];
     r.read_exact(&mut body).map_err(transport_err)?;
     match plist::from_bytes(&body) {
-        Ok(Value::Dictionary(d)) => {
-            if let Some(err) = d.get("Error").and_then(Value::as_str) {
-                return Err(transport_err(format!("device returned error `{err}`")));
-            }
-            Ok(d)
-        }
+        Ok(Value::Dictionary(d)) => Ok(d),
         _ => Err(transport_err("reply is not a plist dictionary")),
     }
+}
+
+/// Like `read_message_raw`, but a top-level `Error` string fails the call
+/// (lockdownd's own convention).
+pub fn read_message(r: &mut impl Read) -> Result<Dictionary> {
+    let d = read_message_raw(r)?;
+    if let Some(err) = d.get("Error").and_then(Value::as_str) {
+        return Err(transport_err(format!("device returned error `{err}`")));
+    }
+    Ok(d)
 }
 
 fn request<const N: usize>(entries: [(&str, Value); N]) -> Dictionary {
