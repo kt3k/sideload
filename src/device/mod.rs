@@ -7,7 +7,9 @@
 //! - `afc`, `installation_proxy`, `misagent`: services used by delivery
 //!   (SPEC Section 10.3).
 //!
-//! Reference: idevice (MIT). TODO: implement.
+//! - `pairing`: parse usbmuxd pairing records.
+//!
+//! Reference: idevice (MIT).
 
 pub mod afc;
 pub mod installation_proxy;
