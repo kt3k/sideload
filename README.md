@@ -6,7 +6,8 @@ A reduced, corrected Rust port of the [Sideloader](https://github.com/Dadoum/Sid
 `install` command plus the diagnostic commands needed when installation fails.
 
 **Status:** early. Argument parsing, configuration resolution, argument validation, and the
-format layer (plist XML/binary, ZIP, DER, JSON) work. Everything else is not implemented yet.
+format layer (plist XML/binary, ZIP, DER, JSON), crypto (SRP, AES, RSA), the HTTPS client, the
+`--sidestore` download, and IPA/bundle processing work. Everything else is not implemented yet.
 
 - [SPEC.md](SPEC.md): behavior specification
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): module map, dependency policy, reference sources

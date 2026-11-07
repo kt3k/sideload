@@ -691,7 +691,9 @@ with `device_not_paired` and tell the user to choose "Trust This Computer" on th
 - The IPA MUST contain exactly one `Payload/<name>.app`. Otherwise fail with `ipa_invalid`.
 - `--strip-extensions`: Delete `PlugIns/` and `Watch/`.
 - `--name`: Set `CFBundleDisplayName` of the main bundle.
-- Rewrite bundle identifiers following Section 4.2.
+- Rewrite bundle identifiers following Section 4.2. A nested Watch app's
+  `WKCompanionAppBundleIdentifier`, when present, MUST be set to the new `Main Bundle ID`.
+- `Info.plist` files MUST be written back in their original format (XML or binary).
 - If the main bundle's identifier (before rewriting) is `com.SideStore.SideStore`, set
   `ALTAppGroups` in `Info.plist` to `[<App Group ID>]`.
 
