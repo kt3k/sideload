@@ -19,20 +19,30 @@ device has not been run yet, and local ADI on macOS/Windows is not done. See
 
 ## Installation
 
-Download the binary for your platform from the
-[latest release](https://github.com/kt3k/sideload/releases/latest):
+On Linux and macOS, the install script detects your platform, downloads the matching binary from
+the latest release, verifies its checksum, and installs it to `~/.local/bin`:
 
 ```sh
-# Linux x86_64 (also: aarch64-unknown-linux-gnu, x86_64/aarch64-apple-darwin,
-# x86_64-pc-windows-msvc.exe)
+curl -fsSL https://raw.githubusercontent.com/kt3k/sideload/main/install.sh | sh
+```
+
+Set `SIDELOAD_VERSION` to pin a release tag or `SIDELOAD_BIN_DIR` to change the install directory.
+
+Or download a binary yourself from the
+[latest release](https://github.com/kt3k/sideload/releases/latest) (targets:
+`x86_64`/`aarch64-unknown-linux-gnu`, `x86_64`/`aarch64-apple-darwin`,
+`x86_64-pc-windows-msvc.exe`); each asset has a matching `.sha256`:
+
+```sh
 curl -L -o sideload https://github.com/kt3k/sideload/releases/latest/download/sideload-x86_64-unknown-linux-gnu
 chmod +x sideload
 sudo mv sideload /usr/local/bin/
 sideload --help
 ```
 
-Each asset has a matching `.sha256`. On macOS, an unsigned binary is quarantined by Gatekeeper;
-clear it with `xattr -d com.apple.quarantine sideload`.
+On macOS, an unsigned binary is quarantined by Gatekeeper; the install script clears it, or do it
+yourself with `xattr -d com.apple.quarantine sideload`. On Windows, download the `.exe` from the
+releases page.
 
 To talk to a device you also need the USB multiplexer: `usbmuxd` on Linux
 (`sudo apt install usbmuxd`), built in on macOS, and Apple Mobile Device Support (bundled with
