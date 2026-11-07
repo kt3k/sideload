@@ -6,39 +6,28 @@
 brew install kt3k/tap/sideload
 ```
 
-`sideload.rb` in this directory is the formula (builds from source with the `rust` toolchain). It
-is kept here for version control; the tap itself lives in a separate repository.
+`sideload.rb` in this directory is a copy of the tap's formula (builds from source with the `rust`
+toolchain), kept here for reference; the tap's copy is the one Homebrew uses.
 
-## One-time: create the tap
+## Tap layout
 
-The tap must be its own GitHub repository whose name starts with `homebrew-`:
-
-```sh
-# Create an empty public repo named kt3k/homebrew-tap, then:
-git clone https://github.com/kt3k/homebrew-tap
-cd homebrew-tap
-mkdir -p Formula
-cp /path/to/sideload/packaging/homebrew/sideload.rb Formula/sideload.rb
-git add Formula/sideload.rb
-git commit -m "Add sideload formula"
-git push
-```
-
-`brew install kt3k/tap/sideload` resolves to `kt3k/homebrew-tap` → `Formula/sideload.rb`.
+The tap is the GitHub repository `kt3k/homebrew-tap`, with formulae at the top level (next to
+`saku.rb`). `brew install kt3k/tap/sideload` resolves to `kt3k/homebrew-tap` → `sideload.rb`.
 
 ## Each release: update the formula
 
-After tagging a release (e.g. `v0.1.0`), update `url` and `sha256` in `Formula/sideload.rb`:
+After the release tag exists (e.g. `v0.1.2`), update `url`, `sha256` and `version` in the tap's
+`sideload.rb`, then copy it back here:
 
 ```sh
-tag=v0.1.0
+tag=v0.1.2
 url="https://github.com/kt3k/sideload/archive/refs/tags/$tag.tar.gz"
 sha=$(curl -fsSL "$url" | shasum -a 256 | awk '{print $1}')
 echo "url \"$url\""
 echo "sha256 \"$sha\""
 ```
 
-Commit the change to the tap repository. (This can be automated later with a release workflow that
+Commit the change to the tap repository. (This could later be automated with a workflow that
 opens a PR against the tap.)
 
 ## Notes

@@ -61,6 +61,52 @@ cargo build --release
 ./target/release/sideload --help
 ```
 
+## Usage
+
+```sh
+# Install an IPA onto the connected device (prompts for Apple ID, password and 2FA code)
+sideload install MyApp.ipa
+
+# Install the latest SideStore release from GitHub
+sideload install -s
+
+# Show what would be registered and signed, without changing anything
+sideload install MyApp.ipa --dry-run
+
+# Sign only and write the result instead of installing
+sideload install MyApp.ipa -o MyApp-signed.ipa
+```
+
+Other `install` options: `--udid`, `--team`, `--strip-extensions` (saves App IDs on free
+accounts), `--bundle-id`, `--name`, `--new-cert`, `--keep-temp`. See `sideload install --help`.
+
+When installation fails, the diagnostic commands show the account state: `team list`,
+`device list` / `device delete`, `cert list` / `cert revoke`, `app-id list` / `app-id delete`.
+
+Credentials can be passed with `SIDELOADER_APPLE_ID` and `SIDELOADER_APPLE_PASSWORD` instead of
+the prompts (the password may then be readable by other processes of the same user).
+
+### Anisette
+
+Apple login needs anisette data. On Linux (x86_64/aarch64), sideload generates it locally by
+downloading Apple's Android ADI libraries. On **macOS and Windows** local generation is not
+implemented yet, so you must use a remote anisette-v3 server:
+
+```sh
+sideload --anisette-server https://ani.example.com install MyApp.ipa
+# or: export SIDELOADER_ANISETTE_SERVER=https://ani.example.com
+```
+
+A remote server is a third party that generates anisette data with device identifiers; use one
+you trust.
+
+## Releasing
+
+Bump `version` in `Cargo.toml`, push to `main`, then run the **Tag release** workflow
+(Actions tab, input e.g. `v0.1.2`). It tags `main`, creates the GitHub Release and dispatches
+`release.yml`, which attaches the binaries. Then update the Homebrew formula
+(see [packaging/homebrew/README.md](packaging/homebrew/README.md)).
+
 ## License
 
 MIT. Files ported from MPL-2.0 sources keep their MPL-2.0 notice (see
