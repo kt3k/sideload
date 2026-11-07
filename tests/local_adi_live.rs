@@ -9,6 +9,10 @@ use sideload::{
 };
 #[cfg(not(target_os = "macos"))]
 use std::path::Path;
+use std::time::Duration;
+
+/// Longer than one OTP time window (about 30 seconds).
+const OTP_WINDOW_WAIT: Duration = Duration::from_secs(35);
 
 #[test]
 #[ignore = "contacts Apple provisioning servers; set SIDELOAD_ADI_LIBRARY_DIR"]
@@ -28,8 +32,8 @@ fn local_adi_live_provisioning_and_otp() {
     let mut provider = LocalAdi::new(dir.path()).unwrap();
     eprintln!("live ADI: provisioning and requesting first OTP");
     let first = provider.headers().unwrap();
-    eprintln!("live ADI: requesting second OTP");
-    let second = provider.headers().unwrap();
+    eprintln!("live ADI: requesting a second OTP immediately");
+    let again = provider.headers().unwrap();
     let otp = |data: sideload::anisette::AnisetteData| {
         data.headers
             .into_iter()
@@ -38,12 +42,17 @@ fn local_adi_live_provisioning_and_otp() {
             .1
     };
     let first = otp(first);
-    let second = otp(second);
-    assert!(!first.is_empty() && !second.is_empty());
-    #[cfg(not(target_os = "macos"))]
+    let again = otp(again);
+    assert!(!first.is_empty() && !again.is_empty());
+    // OTPs are time-windowed: back-to-back requests may return the same
+    // value, so only a request after the window has passed must differ.
+    eprintln!("live ADI: waiting {OTP_WINDOW_WAIT:?} for the next OTP window");
+    std::thread::sleep(OTP_WINDOW_WAIT);
+    let later = otp(provider.headers().unwrap());
+    assert!(!later.is_empty());
     assert!(
-        first != second,
-        "successive Android ADI OTP values must differ"
+        later != first,
+        "the OTP must change after {OTP_WINDOW_WAIT:?}"
     );
-    eprintln!("live ADI: two OTP requests succeeded");
+    eprintln!("live ADI: OTP requests succeeded and the OTP rotates");
 }
