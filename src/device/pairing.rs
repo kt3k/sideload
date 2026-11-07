@@ -102,11 +102,11 @@ pub(crate) mod tests {
     /// Builds a pairing record plist from a freshly generated key and a
     /// self-signed certificate created from it.
     pub(crate) fn sample_record() -> (Vec<u8>, RsaPrivateKey) {
-        let key = RsaPrivateKey::generate(2048).unwrap();
-        // A minimal self-signed-looking certificate is not needed for parsing:
-        // any CERTIFICATE PEM round-trips as opaque DER here.
-        let cert_der = include_bytes!("../sign/testdata/certificate.pem");
-        let cert_pem = std::str::from_utf8(cert_der).unwrap().to_owned();
+        // certificate.pem is the self-signed certificate for this key, so the
+        // record is also usable to build a TLS client identity.
+        let key =
+            RsaPrivateKey::from_pem(include_str!("../crypto/testdata/openssl_key.pem")).unwrap();
+        let cert_pem = include_str!("../sign/testdata/certificate.pem").to_owned();
         let mut d = Dictionary::new();
         d.insert(
             "HostCertificate",
