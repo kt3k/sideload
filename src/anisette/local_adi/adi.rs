@@ -1,6 +1,6 @@
 //! Typed ADI entry points. Mappings are owned by Adi and calls remain on its
 //! constructing thread. Returned native buffers are copied and disposed.
-use super::{AdiResult, fail, hooks, loader::Library, provisioning::Engine};
+use super::{AdiResult, abi::native_type, fail, hooks, loader::Library, provisioning::Engine};
 use std::{
     ffi::{CString, c_char, c_void},
     path::Path,
@@ -10,6 +10,9 @@ pub struct Adi {
     store: Library,
 }
 const DSID: u64 = u64::MAX - 1;
+native_type!(Dispose(*mut c_void) -> i32);
+native_type!(Query(u64) -> i32);
+native_type!(Destroy(u32) -> i32);
 fn status(code: i32, operation: &str) -> AdiResult<()> {
     if code == 0 {
         Ok(())
@@ -40,12 +43,14 @@ impl Adi {
         ] {
             adi.address(entry)?;
         }
-        use std::os::unix::ffi::OsStrExt;
-        let path = CString::new(lib.as_os_str().as_bytes())
-            .map_err(|_| fail("NUL in ADI library path"))?;
+        let path = CString::new(
+            lib.to_str()
+                .ok_or_else(|| fail("ADI path is not Unicode"))?,
+        )
+        .map_err(|_| fail("NUL in ADI library path"))?;
         let identifier = CString::new(android_id).map_err(|_| fail("NUL in Android identifier"))?;
-        type PathFn = unsafe extern "C" fn(*const c_char) -> i32;
-        type IdFn = unsafe extern "C" fn(*const c_char, u32) -> i32;
+        native_type!(PathFn(*const c_char) -> i32);
+        native_type!(IdFn(*const c_char, u32) -> i32);
         let load: PathFn = unsafe { std::mem::transmute(adi.address("kq56gsgHG6")?) };
         let provisioning: PathFn = unsafe { std::mem::transmute(adi.address("nf92ngaK92")?) };
         let set_id: IdFn = unsafe { std::mem::transmute(adi.address("Sph98paBcz")?) };
@@ -66,8 +71,7 @@ impl Adi {
     }
     fn dispose(&self, p: *mut u8) -> AdiResult<()> {
         if !p.is_null() {
-            let f: unsafe extern "C" fn(*mut c_void) -> i32 =
-                unsafe { std::mem::transmute(self.address("jk24uiwqrg")?) };
+            let f: Dispose = unsafe { std::mem::transmute(self.address("jk24uiwqrg")?) };
             unsafe {
                 f(p.cast());
             }
@@ -86,8 +90,7 @@ impl Adi {
 }
 impl Engine for Adi {
     fn is_provisioned(&mut self) -> AdiResult<bool> {
-        let f: unsafe extern "C" fn(u64) -> i32 =
-            unsafe { std::mem::transmute(self.address("aslgmuibau")?) };
+        let f: Query = unsafe { std::mem::transmute(self.address("aslgmuibau")?) };
         let code = hooks::with_core(&self.core, || unsafe { f(DSID) });
         match code {
             0 => Ok(true),
@@ -96,7 +99,7 @@ impl Engine for Adi {
         }
     }
     fn start(&mut self, spim: &[u8]) -> AdiResult<(Vec<u8>, u32)> {
-        type F = unsafe extern "C" fn(u64, *const u8, u32, *mut *mut u8, *mut u32, *mut u32) -> i32;
+        native_type!(F(u64, *const u8, u32, *mut *mut u8, *mut u32, *mut u32) -> i32);
         let f: F = unsafe { std::mem::transmute(self.address("rsegvyrt87")?) };
         hooks::with_core(&self.core, || {
             let (mut p, mut len, mut session) = (std::ptr::null_mut(), 0, 0);
@@ -119,7 +122,7 @@ impl Engine for Adi {
             match unsafe { self.copy(p, len) } {
                 Ok(cpim) => Ok((cpim, session)),
                 Err(error) => {
-                    let destroy: unsafe extern "C" fn(u32) -> i32 =
+                    let destroy: Destroy =
                         unsafe { std::mem::transmute(self.address("fy34trz2st")?) };
                     unsafe {
                         destroy(session);
@@ -130,7 +133,7 @@ impl Engine for Adi {
         })
     }
     fn finish(&mut self, session: u32, ptm: &[u8], tk: &[u8]) -> AdiResult<()> {
-        type F = unsafe extern "C" fn(u32, *const u8, u32, *const u8, u32) -> i32;
+        native_type!(F(u32, *const u8, u32, *const u8, u32) -> i32);
         let f: F = unsafe { std::mem::transmute(self.address("uv5t6nhkui")?) };
         hooks::with_core(&self.core, || unsafe {
             status(
@@ -147,12 +150,12 @@ impl Engine for Adi {
     }
     fn destroy(&mut self, session: u32) {
         if let Ok(address) = self.address("fy34trz2st") {
-            let f: unsafe extern "C" fn(u32) -> i32 = unsafe { std::mem::transmute(address) };
+            let f: Destroy = unsafe { std::mem::transmute(address) };
             hooks::with_core(&self.core, || unsafe { f(session) });
         }
     }
     fn otp(&mut self) -> AdiResult<(Vec<u8>, Vec<u8>)> {
-        type F = unsafe extern "C" fn(u64, *mut *mut u8, *mut u32, *mut *mut u8, *mut u32) -> i32;
+        native_type!(F(u64, *mut *mut u8, *mut u32, *mut *mut u8, *mut u32) -> i32);
         let f: F = unsafe { std::mem::transmute(self.address("qi864985u0")?) };
         hooks::with_core(&self.core, || {
             let (mut mid, mut mid_len, mut otp, mut otp_len) =

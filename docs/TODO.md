@@ -9,7 +9,7 @@ Checked items have implementation and mock coverage; live validation is noted ex
 
 - [x] Apple account login (`src/apple/gsa.rs`, SPEC 9.2): SRP, trusted-device 2FA, Xcode token; live validation pending
 - [x] Developer Services client (`src/apple/developer.rs`, SPEC 9.4): all iOS operations and CSR; live validation pending
-- [x] Local ADI (`src/anisette/local_adi/`, SPEC 9.1): Linux x86_64/aarch64 loader + provisioning; reviewed. macOS/Windows, ARM hardware, large-page shifting, live OTP pending: Linux loader/provisioning implemented and x86_64 initialization checked; macOS/Windows and live OTP validation remain
+- [x] Local Anisette: Linux x86_64/aarch64 and Windows x64 Android ADI; macOS Intel/Apple Silicon native AOSKit/AuthKit. Linux initialization tested; macOS/Windows runtime, ARM hardware, large-page shifting and live OTP validation pending.
 - [ ] Anisette resync on GSA `hsc 434` / `X-Apple-I-MD-DATA` (needs an AnisetteProvider::resync hook; live-only)
 
 ## In progress here

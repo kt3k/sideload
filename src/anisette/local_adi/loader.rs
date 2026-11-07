@@ -1,10 +1,14 @@
 //! Private executable mappings and ELF relocation. No ELF constructors run:
 //! only the ADI entry points and their explicit initialization are supported.
-use super::{AdiResult, elf::Elf, fail, hooks};
+use super::{
+    AdiResult,
+    elf::Elf,
+    fail, hooks,
+    memory::{EXEC, Mapping, WRITE},
+};
 use std::{collections::BTreeMap, marker::PhantomData, rc::Rc};
 pub struct Library {
-    memory: *mut libc::c_void,
-    length: usize,
+    memory: Mapping,
     exports: BTreeMap<String, usize>,
     _single_thread: PhantomData<Rc<()>>,
 }
@@ -19,53 +23,29 @@ impl Library {
         if elf.machine != expected {
             return Err(fail("ADI ELF architecture does not match host"));
         }
-        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-        if page < 4096 || !(page as usize).is_power_of_two() {
-            return Err(fail("unsupported host page size"));
-        }
-        let page = page as usize;
-        let length = (elf.span + page - 1) & !(page - 1);
-        let memory = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                length,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
-            )
-        };
-        if memory == libc::MAP_FAILED {
-            return Err(fail("cannot map ADI library"));
-        }
+        let memory = Mapping::new(elf.span)?;
+        let page = memory.page;
+        let length = memory.length;
+        let base = memory.pointer as usize;
         let mut library = Self {
             memory,
-            length,
             exports: BTreeMap::new(),
             _single_thread: PhantomData,
         };
-        let base = memory as usize;
         let mut protections = vec![0; length / page];
-        for s in &elf.segments {
+        for segment in &elf.segments {
             unsafe {
                 std::ptr::copy_nonoverlapping(
-                    bytes.as_ptr().add(s.offset),
-                    (base + s.address) as *mut u8,
-                    s.file_size,
+                    bytes.as_ptr().add(segment.offset),
+                    (base + segment.address) as *mut u8,
+                    segment.file_size,
                 );
             }
-            let prot = if s.flags & 4 != 0 { libc::PROT_READ } else { 0 }
-                | if s.flags & 2 != 0 {
-                    libc::PROT_WRITE
-                } else {
-                    0
-                }
-                | if s.flags & 1 != 0 { libc::PROT_EXEC } else { 0 };
-            if s.memory_size > 0 {
-                for protection in
-                    &mut protections[s.address / page..(s.address + s.memory_size).div_ceil(page)]
+            if segment.memory_size > 0 {
+                for protection in &mut protections
+                    [segment.address / page..(segment.address + segment.memory_size).div_ceil(page)]
                 {
-                    *protection |= prot;
+                    *protection |= segment.flags & 7;
                 }
             }
         }
@@ -116,34 +96,15 @@ impl Library {
             }
         }
         for (i, &prot) in protections.iter().enumerate() {
-            if prot & libc::PROT_EXEC != 0 && prot & libc::PROT_WRITE != 0 {
+            if prot & EXEC != 0 && prot & WRITE != 0 {
                 return Err(fail(
                     "host pages combine writable and executable ADI segments",
                 ));
             }
-            if unsafe { libc::mprotect((base + i * page) as *mut _, page, prot) } != 0 {
-                return Err(fail("cannot protect ADI mapping"));
+            library.memory.protect(i * page, page, prot)?;
+            if prot & EXEC != 0 {
+                library.memory.flush_code(i * page, page)?;
             }
-        }
-        #[cfg(target_arch = "aarch64")]
-        unsafe {
-            // Synchronize freshly generated executable pages with the I-cache.
-            let ctr: u64;
-            core::arch::asm!("mrs {}, ctr_el0",out(reg)ctr);
-            let dline = 4usize << ((ctr >> 16) & 15);
-            let iline = 4usize << (ctr & 15);
-            for (i, &p) in protections.iter().enumerate() {
-                if p & libc::PROT_EXEC != 0 {
-                    for a in (base + i * page..base + (i + 1) * page).step_by(dline) {
-                        core::arch::asm!("dc cvau, {}",in(reg)a);
-                    }
-                    core::arch::asm!("dsb ish");
-                    for a in (base + i * page..base + (i + 1) * page).step_by(iline) {
-                        core::arch::asm!("ic ivau, {}",in(reg)a);
-                    }
-                }
-            }
-            core::arch::asm!("dsb ish", "isb");
         }
         Ok(library)
     }
@@ -151,14 +112,6 @@ impl Library {
         self.exports.get(name).copied()
     }
 }
-impl Drop for Library {
-    fn drop(&mut self) {
-        unsafe {
-            libc::munmap(self.memory, self.length);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,7 +119,8 @@ mod tests {
     fn mapped_code_and_relative_relocation() {
         let lib = Library::load(&super::super::elf::tests::fixture(), &[]).unwrap();
         let answer = lib.symbol("answer").unwrap();
-        let function: unsafe extern "C" fn() -> u32 = unsafe { std::mem::transmute(answer) };
+        super::super::abi::native_type!(Function() -> u32);
+        let function: Function = unsafe { std::mem::transmute(answer) };
         assert_eq!(unsafe { function() }, 42);
         let pointer = lib.symbol("relocated").unwrap();
         assert_eq!(unsafe { (pointer as *const usize).read() }, answer);

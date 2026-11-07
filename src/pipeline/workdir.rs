@@ -18,7 +18,9 @@ impl WorkDir {
             .map(|b| crate::crypto::hex(&b))
             .map_err(|e| Error::new(ErrorCode::InternalError, e.to_string()))?;
         let path = std::env::temp_dir().join(format!("sideload-{suffix}"));
-        let mut builder = std::fs::DirBuilder::new();
+        let builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        let mut builder = builder;
         #[cfg(unix)]
         {
             use std::os::unix::fs::DirBuilderExt;

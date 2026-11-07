@@ -1,6 +1,10 @@
-//! Linux bionic compatibility hooks. ADI calls are serialized on the owning
+//! Bionic compatibility hooks for Linux and Windows x64. ADI calls are serialized on the owning
 //! thread; Android pthread objects must never be passed to glibc pthread APIs.
-use super::loader::Library;
+use super::{
+    abi::{native_function, native_type},
+    loader::Library,
+};
+native_type!(Initializer() -> ());
 use std::{
     cell::Cell,
     ffi::{CStr, c_char, c_void},
@@ -17,7 +21,8 @@ pub fn with_core<T>(core: &Library, call: impl FnOnce() -> T) -> T {
     let _reset = Reset(old);
     call()
 }
-unsafe extern "C" fn open_library(name: *const c_char, _flags: i32) -> *mut c_void {
+native_function! {
+unsafe fn open_library(name: *const c_char, _flags: i32) -> *mut c_void {
     if name.is_null() {
         return std::ptr::null_mut();
     }
@@ -28,7 +33,9 @@ unsafe extern "C" fn open_library(name: *const c_char, _flags: i32) -> *mut c_vo
         std::ptr::null_mut()
     }
 }
-unsafe extern "C" fn symbol(handle: *mut c_void, name: *const c_char) -> *mut c_void {
+}
+native_function! {
+unsafe fn symbol(handle: *mut c_void, name: *const c_char) -> *mut c_void {
     if name.is_null() {
         return std::ptr::null_mut();
     }
@@ -43,15 +50,21 @@ unsafe extern "C" fn symbol(handle: *mut c_void, name: *const c_char) -> *mut c_
         unsafe { &*core }.symbol(name).unwrap_or(0) as *mut c_void
     })
 }
-unsafe extern "C" fn zero() -> i32 {
+}
+native_function! {
+unsafe fn zero() -> i32 {
     0
 }
-unsafe extern "C" fn no_thread() -> i32 {
-    libc::ENOSYS
 }
-unsafe extern "C" fn once(flag: *mut i32, init: unsafe extern "C" fn()) -> i32 {
+native_function! {
+unsafe fn no_thread() -> i32 {
+    38
+}
+}
+native_function! {
+unsafe fn once(flag: *mut i32, init: Initializer) -> i32 {
     if flag.is_null() {
-        return libc::EINVAL;
+        return 22;
     }
     if unsafe { *flag } == 0 {
         unsafe {
@@ -62,7 +75,9 @@ unsafe extern "C" fn once(flag: *mut i32, init: unsafe extern "C" fn()) -> i32 {
     }
     0
 }
-unsafe extern "C" fn property(_name: *const c_char, value: *mut c_char) -> i32 {
+}
+native_function! {
+unsafe fn property(_name: *const c_char, value: *mut c_char) -> i32 {
     let bytes = b"no s/n number\0";
     if !value.is_null() {
         unsafe {
@@ -71,25 +86,35 @@ unsafe extern "C" fn property(_name: *const c_char, value: *mut c_char) -> i32 {
     }
     (bytes.len() - 1) as i32
 }
-unsafe extern "C" fn random() -> u32 {
+}
+native_function! {
+unsafe fn random() -> u32 {
     match crate::crypto::random_bytes(4) {
         Ok(bytes) => u32::from_ne_bytes(bytes.try_into().unwrap()),
         Err(_) => std::process::abort(),
     }
 }
-unsafe extern "C" fn unresolved() -> ! {
+}
+native_function! {
+unsafe fn unresolved() -> ! {
     eprintln!("Local ADI called an unsupported Android import");
     std::process::abort()
+}
 }
 pub fn unresolved_address() -> usize {
     unresolved as *const () as usize
 }
 pub fn resolve(name: &str) -> Option<usize> {
+    #[cfg(windows)]
+    if let Some(address) = super::windows::resolve(name) {
+        return Some(address);
+    }
     Some(match name {
         "dlopen" => open_library as *const () as usize,
         "dlsym" => symbol as *const () as usize,
         "dlclose" | "__cxa_atexit" | "__cxa_finalize" => zero as *const () as usize,
         "__system_property_get" => property as *const () as usize,
+        #[cfg(not(windows))]
         "__errno" => libc::__errno_location as *const () as usize,
         "arc4random" => random as *const () as usize,
         "pthread_once" => once as *const () as usize,
@@ -99,6 +124,7 @@ pub fn resolve(name: &str) -> Option<usize> {
         }
         // This list is intentionally narrow: only functions with matching Linux
         // ABI and object layout may fall through to the host dynamic linker.
+        #[cfg(not(windows))]
         "open" | "close" | "read" | "write" | "mkdir" | "chmod" | "umask" | "ftruncate"
         | "lstat" | "fstat" | "malloc" | "calloc" | "realloc" | "free" | "strncpy" | "strcpy"
         | "strlen" | "strcmp" | "strncmp" | "memcpy" | "memmove" | "memset" | "memcmp"

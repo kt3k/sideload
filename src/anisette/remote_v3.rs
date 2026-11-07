@@ -269,7 +269,9 @@ impl RemoteV3 {
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound && !create => continue,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    let mut builder = fs::DirBuilder::new();
+                    let builder = fs::DirBuilder::new();
+                    #[cfg(unix)]
+                    let mut builder = builder;
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::DirBuilderExt;

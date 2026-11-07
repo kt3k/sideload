@@ -47,3 +47,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo test --all --no-run
+      - name: Local Anisette compatibility tests
+        run: cargo test anisette::local_adi::

@@ -7,9 +7,9 @@ A reduced, corrected Rust port of the [Sideloader](https://github.com/Dadoum/Sid
 
 **Status:** feature-complete, pending live validation. The full `install` pipeline, the
 diagnostic commands, code signing, the Apple login / Developer Services clients, remote anisette
-v3, Linux (x86_64/aarch64) local ADI, and device communication are all implemented and covered by
-unit tests against mock transports. End-to-end installation against a real Apple account and
-device has not been run yet, and local ADI on macOS/Windows is not done. See
+v3, local Anisette on Linux/macOS/Windows, and device communication are implemented. Deterministic
+paths have unit tests and platform code is cross-compiled. End-to-end installation against a
+real Apple account/device and macOS/Windows local Anisette runtime remain unverified. See
 [docs/TODO.md](docs/TODO.md).
 
 - [SPEC.md](SPEC.md): behavior specification
@@ -88,9 +88,10 @@ the prompts (the password may then be readable by other processes of the same us
 
 ### Anisette
 
-Apple login needs anisette data. On Linux (x86_64/aarch64), sideload generates it locally by
-downloading Apple's Android ADI libraries. On **macOS and Windows** local generation is not
-implemented yet, so you must use a remote anisette-v3 server:
+Apple login needs anisette data. Local generation uses Apple's Android ADI libraries on Linux
+(x86_64/aarch64) and Windows (x86_64), downloaded automatically. macOS (Intel/Apple Silicon)
+uses the system AOSKit/AuthKit frameworks without downloading Android libraries. If a native
+backend is unavailable or fails, use a remote anisette-v3 server:
 
 ```sh
 sideload --anisette-server https://ani.example.com install MyApp.ipa

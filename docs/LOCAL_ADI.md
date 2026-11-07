@@ -182,12 +182,13 @@ for this document; nothing was run.
 ## 9. Current implementation in this repository
 
 `anisette::provider` now selects `local_adi::LocalAdi` when no remote server is configured.
-This is a **partial rollout** of SPEC 9.1: Linux x86_64/aarch64 loaders are implemented;
-macOS and Windows return `anisette_unavailable` before downloading, with a remote-provider
-suggestion. Linux x86_64 was checked with the official current APK. ARM64 has format/relocation
-support but has not been run on real hardware. The full multi-OS TODO remains open.
+The backend is native AOSKit/AuthKit on macOS Intel/Apple Silicon, and Android ADI on
+Linux x86_64/aarch64 and Windows x64. Linux x86_64 was checked with the official current APK.
+The macOS Intel/ARM64 and Windows x64 GNU/MSVC code paths are cross-compiled, including tests,
+but their runtime behavior has not been verified on real machines. Linux ARM64 also awaits
+hardware validation. Unsupported CPU/OS combinations return an actionable error.
 
-On first use, `download::ensure` obtains Apple's HTTPS APK, extracts only the architecture's
+On first use of an Android backend, `download::ensure` obtains Apple's HTTPS APK, extracts only the architecture's
 two libraries, validates ELF metadata, and installs each with a private temporary file and
 rename under `config/lib`. Download start/completion show 0% and 100%; intermediate byte-level
 progress is not implemented. The proprietary libraries are not redistributed in this repository.
@@ -206,8 +207,8 @@ abort trap; calling unsupported portions of the Android libraries terminates the
 The initialization smoke test exercises the required ADI setup and an unprovisioned-state query.
 It does not establish that every later vendor-code path is compatible.
 
-`device.json` uses the upstream field names and reuses an existing valid identity. New files
-are private (0600). ADI's provisioning files are kept under `config/lib`, matching SPEC 4.1.1.
+`device.json` uses the upstream field names and reuses an existing valid identity. New Unix files
+are private (0600); Windows files inherit the user profile directory ACL. ADI's provisioning files are kept under `config/lib`, matching SPEC 4.1.1.
 Provisioning relays Apple's lookup/start/finish exchange directly, destroys native sessions
 on failure, and produces fresh machine/OTP headers. This protocol is tested with fake native
 and Apple transports. Device identity, native buffers, and ADI state are never logged.
@@ -225,8 +226,39 @@ malformed headers and unsupported relocations are rejected. Mock provisioning te
 stable identity, one-time provisioning, fresh OTPs, and cleanup after a failed exchange.
 
 **Still unverified:** live Apple provisioning and OTP generation with the native libraries.
-The attempted live check was rejected by automatic approval review because it would send a new
-device identifier and ADI data to Apple's provisioning servers without destination-specific
-user authorization. It was not executed. macOS/Windows ABI hooks, ARM hardware tests, large-page
-load shifting, and ADI resynchronization remain follow-up work; do not treat this as full
-SPEC 9.1 conformance.
+After explicit user authorization, a live check was attempted on 2026-11-07. Native library
+initialization passed, but the first lookup request failed with HTTP 503. A separate curl
+request without device identifiers also returned 503 from Envoy with `upstream connect error`
+and `remote connection failure`. Provisioning and OTP generation were not reached, so this
+does not establish live interoperability or an Apple application-level rejection.
+
+The opt-in reproduction is `SIDELOAD_ADI_LIBRARY_DIR=/path/to/extracted/x86_64 cargo test
+--test local_adi_live -- --ignored --nocapture`. It uses temporary state, sends no Apple ID or
+password, and prints no generated header values. macOS/Windows runtime tests, ARM hardware tests, large-page load shifting, and ADI
+resynchronization remain follow-up work; full end-to-end conformance is not yet established.
+
+
+## 10. macOS and Windows implementations
+
+macOS uses the OS's AOSKit and AuthKit frameworks through the Objective-C runtime. It requests
+OTP headers for DSID -2, and reads the device identity/client information from AKDevice. This
+avoids Android ELF loading, bionic TLS, executable memory and foreign ARM64 ABI requirements on
+Apple Silicon. Frameworks stay resident once loaded; each request uses an autorelease pool.
+Missing classes/selectors, nil results, wrong value types and invalid OTP encoding fail with
+`anisette_unavailable`; generated values are never logged. Private framework APIs can change
+across macOS versions, and a machine's native Apple services may need provisioning/sign-in.
+
+Windows x64 uses the ELF loader with VirtualAlloc/VirtualProtect/VirtualFree and explicit
+instruction-cache flushing. All ADI entry points and callbacks use `extern "sysv64"`. CRT
+adapters cross into the Windows ABI; passing CRT addresses directly to Android would corrupt
+arguments/registers. The adapters convert UTF-8 paths to UTF-16, Android open flags to binary
+CRT flags, CRT errors to Android errno, and stat64 into the 144-byte Linux x86_64 stat layout.
+The layout and UTF-8 file I/O have Windows-specific tests. Android thread creation is still
+unsupported and pthread objects remain confined to the serialized compatibility layer.
+
+A deterministic test crosses System V and Win64 ABIs with eight arguments, checking both
+register and stack arguments. The existing Linux official-library initialization smoke test
+continues to pass. CI executes deterministic local-Anisette tests on its Linux ARM, macOS and
+Windows runners; the optional native-library/live-service tests are never enabled by default.
+Cross-compilation verifies Rust/platform types and C dependencies, not private framework
+availability, native DLL linkage, or successful live OTP generation.

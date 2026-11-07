@@ -3,8 +3,8 @@
 //! Produces the `X-Apple-I-MD*` headers Apple requires on authentication
 //! and Developer Services requests. Two backends:
 //! - `remote_v3`: an anisette-v3 compatible server (all platforms).
-//! - `local_adi`: Apple's Android ADI libraries loaded in-process
-//!   (Linux x86_64 / aarch64 implemented; other SPEC 9.1 hosts pending).
+//! - `local_adi`: native AOSKit/AuthKit on macOS, Android ADI loaded in-process
+//!   on Linux x86_64/aarch64 and Windows x86_64 (SPEC 9.1).
 
 pub mod remote_v3;
 
