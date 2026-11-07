@@ -13,4 +13,5 @@ pub mod afc;
 pub mod installation_proxy;
 pub mod lockdown;
 pub mod misagent;
+pub mod pairing;
 pub mod usbmuxd;
