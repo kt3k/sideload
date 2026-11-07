@@ -17,8 +17,9 @@ pub enum Message {
     Close,
 }
 
-pub struct WebSocket {
-    io: BufReader<Stream>,
+pub struct WebSocket<S = Stream> {
+    io: BufReader<S>,
+    closed: bool,
 }
 
 fn err(msg: impl Into<String>) -> NetError {
@@ -41,12 +42,12 @@ impl WebSocket {
             return Err(err(format!("not a ws:// or wss:// URL: {url}")));
         };
         let u = Url::parse(&http_url)?;
-        let mut stream = client.open(&u)?;
+        let (mut stream, target) = client.open_http(&u)?;
         let key = base64::encode(&crypto::random_bytes(16).map_err(|e| err(e.to_string()))?);
         let request = format!(
             "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
              Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\nUser-Agent: {}\r\n\r\n",
-            u.path,
+            target,
             u.authority(),
             client.user_agent()
         );
@@ -55,20 +56,19 @@ impl WebSocket {
         stream.flush().map_err(io)?;
         let mut reader = BufReader::new(stream);
         let (status, headers) = read_head(&mut reader)?;
-        if status != 101 {
-            return Err(err(format!("handshake failed with HTTP {status}")));
-        }
-        let accept = headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("sec-websocket-accept"))
-            .map(|(_, v)| v.as_str());
-        if accept != Some(accept_key(&key).as_str()) {
-            return Err(err("invalid Sec-WebSocket-Accept"));
-        }
-        Ok(WebSocket { io: reader })
+        validate_handshake(status, &headers, &key)?;
+        Ok(WebSocket {
+            io: reader,
+            closed: false,
+        })
     }
+}
 
+impl<S: Read + Write> WebSocket<S> {
     fn write_frame(&mut self, opcode: u8, payload: &[u8]) -> NetResult<()> {
+        if self.closed {
+            return Err(err("connection is closed"));
+        }
         let frame = encode_frame(opcode, payload, &mask_key()?);
         let s = self.io.get_mut();
         s.write_all(&frame).map_err(|e| err(e.to_string()))?;
@@ -76,15 +76,21 @@ impl WebSocket {
     }
 
     pub fn send_text(&mut self, text: &str) -> NetResult<()> {
+        if text.len() > MAX_MESSAGE {
+            return Err(err("message too large"));
+        }
         self.write_frame(0x1, text.as_bytes())
     }
 
     /// Receives the next text message, answering pings along the way.
     pub fn recv(&mut self) -> NetResult<Message> {
+        if self.closed {
+            return Ok(Message::Close);
+        }
         let mut message = Vec::new();
         let mut in_text = false;
         loop {
-            let (fin, opcode, payload) = read_frame(&mut self.io)?;
+            let (fin, opcode, payload) = read_frame_direction(&mut self.io, Some(false))?;
             match opcode {
                 0x1 | 0x0 => {
                     if opcode == 0x1 {
@@ -106,7 +112,12 @@ impl WebSocket {
                     }
                 }
                 0x2 => return Err(err("unexpected binary message")),
-                0x8 => return Ok(Message::Close),
+                0x8 => {
+                    validate_close(&payload)?;
+                    self.write_frame(0x8, &payload)?;
+                    self.closed = true;
+                    return Ok(Message::Close);
+                }
                 0x9 => self.write_frame(0xA, &payload)?,
                 0xA => {}
                 op => return Err(err(format!("unknown opcode {op}"))),
@@ -115,7 +126,11 @@ impl WebSocket {
     }
 
     pub fn close(&mut self) -> NetResult<()> {
-        self.write_frame(0x8, &1000u16.to_be_bytes())
+        if !self.closed {
+            self.write_frame(0x8, &1000u16.to_be_bytes())?;
+            self.closed = true;
+        }
+        Ok(())
     }
 }
 
@@ -145,13 +160,29 @@ pub fn encode_frame(opcode: u8, payload: &[u8], mask: &[u8; 4]) -> Vec<u8> {
 
 /// Reads one frame: (fin, opcode, unmasked payload).
 pub fn read_frame(r: &mut impl Read) -> NetResult<(bool, u8, Vec<u8>)> {
+    read_frame_direction(r, None)
+}
+fn read_frame_direction(
+    r: &mut impl Read,
+    expected_mask: Option<bool>,
+) -> NetResult<(bool, u8, Vec<u8>)> {
     let io = |e: std::io::Error| err(e.to_string());
     let mut h = [0u8; 2];
     r.read_exact(&mut h).map_err(io)?;
     let fin = h[0] & 0x80 != 0;
     let opcode = h[0] & 0x0F;
     let masked = h[1] & 0x80 != 0;
-    let len = match h[1] & 0x7F {
+    if h[0] & 0x70 != 0 || !matches!(opcode, 0 | 1 | 2 | 8 | 9 | 10) {
+        return Err(err("reserved frame bits or opcode"));
+    }
+    if expected_mask.is_some_and(|expected| expected != masked) {
+        return Err(err("invalid server frame masking"));
+    }
+    let short_len = h[1] & 0x7f;
+    if opcode >= 8 && (!fin || short_len > 125) {
+        return Err(err("invalid control frame"));
+    }
+    let len = match short_len {
         126 => {
             let mut b = [0u8; 2];
             r.read_exact(&mut b).map_err(io)?;
@@ -164,6 +195,9 @@ pub fn read_frame(r: &mut impl Read) -> NetResult<(bool, u8, Vec<u8>)> {
         }
         n => u64::from(n),
     };
+    if (short_len == 126 && len < 126) || (short_len == 127 && (len < 65536 || len >> 63 != 0)) {
+        return Err(err("noncanonical frame length"));
+    }
     if len > MAX_MESSAGE as u64 {
         return Err(err("frame too large"));
     }
@@ -179,6 +213,53 @@ pub fn read_frame(r: &mut impl Read) -> NetResult<(bool, u8, Vec<u8>)> {
         }
     }
     Ok((fin, opcode, payload))
+}
+
+fn validate_handshake(status: u16, headers: &[(String, String)], key: &str) -> NetResult<()> {
+    if status != 101 {
+        return Err(err(format!("handshake failed with HTTP {status}")));
+    }
+    let accept = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("sec-websocket-accept"))
+        .map(|(_, v)| v.as_str());
+    if accept != Some(accept_key(key).as_str()) {
+        return Err(err("invalid Sec-WebSocket-Accept"));
+    }
+    let token = |name: &str, expected: &str| {
+        headers
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case(name))
+            .any(|(_, v)| {
+                v.split(',')
+                    .any(|t| t.trim().eq_ignore_ascii_case(expected))
+            })
+    };
+    if !token("upgrade", "websocket")
+        || !token("connection", "upgrade")
+        || headers.iter().any(|(k, _)| {
+            k.eq_ignore_ascii_case("sec-websocket-extensions")
+                || k.eq_ignore_ascii_case("sec-websocket-protocol")
+        })
+    {
+        return Err(err("invalid or unsolicited WebSocket upgrade headers"));
+    }
+    Ok(())
+}
+
+fn validate_close(payload: &[u8]) -> NetResult<()> {
+    if payload.len() == 1 {
+        return Err(err("invalid close payload"));
+    }
+    if payload.len() >= 2 {
+        let code = u16::from_be_bytes([payload[0], payload[1]]);
+        if !(matches!(code,1000..=1003|1007..=1014|3000..=4999))
+            || std::str::from_utf8(&payload[2..]).is_err()
+        {
+            return Err(err("invalid close status or reason"));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -220,5 +301,101 @@ mod tests {
         ];
         assert_eq!(read_frame(&mut Cursor::new(masked)).unwrap().2, b"Hello");
         assert!(read_frame(&mut Cursor::new(vec![0x81])).is_err());
+    }
+}
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+    use std::io::Cursor;
+    struct Duplex {
+        incoming: Cursor<Vec<u8>>,
+        outgoing: Vec<u8>,
+    }
+    impl Read for Duplex {
+        fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+            self.incoming.read(b)
+        }
+    }
+    impl Write for Duplex {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.outgoing.extend(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    fn socket(frames: Vec<u8>) -> WebSocket<Duplex> {
+        WebSocket {
+            io: BufReader::new(Duplex {
+                incoming: Cursor::new(frames),
+                outgoing: vec![],
+            }),
+            closed: false,
+        }
+    }
+    #[test]
+    fn rejects_reserved_bits_masked_server_and_invalid_control_frames() {
+        for frame in [
+            vec![0xc1, 0],
+            vec![0x83, 0],
+            vec![0x09, 0],
+            vec![0x89, 126, 0, 126],
+            vec![0x81, 126, 0, 1, b'x'],
+            vec![0x81, 127, 0, 0, 0, 0, 0, 0, 0, 1, b'x'],
+        ] {
+            assert!(read_frame(&mut Cursor::new(frame)).is_err());
+        }
+        assert!(
+            socket(encode_frame(1, b"hello", &[1, 2, 3, 4]))
+                .recv()
+                .is_err()
+        );
+        for payload in [vec![1], vec![3, 237], vec![3, 232, 0xff]] {
+            let mut frame = vec![0x88, payload.len() as u8];
+            frame.extend(payload);
+            assert!(socket(frame).recv().is_err());
+        }
+    }
+    #[test]
+    fn fragments_and_ping_pong_then_close() {
+        let mut ws = socket(vec![
+            0x01, 2, b'h', b'e', 0x89, 1, b'?', 0x80, 3, b'l', b'l', b'o', 0x88, 2, 3, 232,
+        ]);
+        assert_eq!(ws.recv().unwrap(), Message::Text("hello".into()));
+        assert_eq!(ws.recv().unwrap(), Message::Close);
+        let mut out = Cursor::new(&ws.io.get_ref().outgoing);
+        assert_eq!(read_frame(&mut out).unwrap(), (true, 10, vec![b'?']));
+        assert_eq!(read_frame(&mut out).unwrap(), (true, 8, vec![3, 232]));
+        assert!(ws.send_text("after close").is_err());
+        assert_eq!(ws.recv().unwrap(), Message::Close);
+        assert!(socket(vec![0x80, 0]).recv().is_err());
+        assert!(socket(vec![0x01, 0, 0x81, 0]).recv().is_err());
+    }
+}
+
+#[cfg(test)]
+mod handshake_tests {
+    use super::*;
+    #[test]
+    fn requires_upgrade_headers_and_rejects_unsolicited_extensions() {
+        let key = "dGhlIHNhbXBsZSBub25jZQ==";
+        let mut headers = vec![
+            ("Sec-WebSocket-Accept".into(), accept_key(key)),
+            ("Connection".into(), "keep-alive, Upgrade".into()),
+            ("Upgrade".into(), "WebSocket".into()),
+        ];
+        assert!(validate_handshake(101, &headers, key).is_ok());
+        assert!(validate_handshake(200, &headers, key).is_err());
+        assert!(validate_handshake(101, &headers, "wrong").is_err());
+        headers.pop();
+        assert!(validate_handshake(101, &headers, key).is_err());
+        headers.push(("Upgrade".into(), "websocket".into()));
+        headers.push((
+            "Sec-WebSocket-Extensions".into(),
+            "permessage-deflate".into(),
+        ));
+        assert!(validate_handshake(101, &headers, key).is_err());
     }
 }

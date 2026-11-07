@@ -2,9 +2,9 @@
 //!
 //! - One request per connection (`Connection: close`).
 //! - Bodies: `Content-Length`, `chunked`, or read-to-EOF.
-//! - Redirects (301/302/303/307/308) are followed for GET, HTTPS only.
-//! - `HTTPS_PROXY` / `https_proxy` (an `http://host:port` proxy, CONNECT
-//!   tunnel) and `NO_PROXY` are honored.
+//! - Redirects are followed for GET; HTTPS never downgrades to HTTP.
+//! - HTTP_PROXY forwards plain HTTP using absolute-form requests; HTTPS_PROXY
+//!   tunnels TLS using CONNECT. Lowercase variants and NO_PROXY are honored.
 //! - Extra trust anchors can be added from a PEM file named by
 //!   `SSL_CERT_FILE` (for corporate TLS-intercepting proxies).
 
@@ -112,6 +112,17 @@ impl Url {
         if authority.contains('@') {
             return Err(NetError::transport("credentials in URLs are not supported"));
         }
+        if authority
+            .bytes()
+            .any(|b| b.is_ascii_control() || b.is_ascii_whitespace())
+            || path
+                .bytes()
+                .any(|b| b.is_ascii_control() || b.is_ascii_whitespace())
+        {
+            return Err(NetError::transport(
+                "URL contains control characters or spaces",
+            ));
+        }
         let (host, port) = split_host_port(authority, if tls { 443 } else { 80 })?;
         Ok(Url {
             tls,
@@ -150,27 +161,50 @@ impl Url {
     }
 
     pub fn authority(&self) -> String {
-        if self.port == if self.tls { 443 } else { 80 } {
-            self.host.clone()
+        let host = if self.host.contains(':') {
+            format!("[{}]", self.host)
         } else {
-            format!("{}:{}", self.host, self.port)
+            self.host.clone()
+        };
+        if self.port == if self.tls { 443 } else { 80 } {
+            host
+        } else {
+            format!("{host}:{}", self.port)
         }
     }
 }
 
 fn split_host_port(authority: &str, default_port: u16) -> NetResult<(String, u16)> {
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((h, p)) if !h.ends_with(']') || h.starts_with('[') => {
-            let port = p
-                .parse()
-                .map_err(|_| NetError::transport(format!("invalid port in `{authority}`")))?;
-            (h, port)
+    let (host, port) = if let Some(rest) = authority.strip_prefix('[') {
+        let (host, suffix) = rest
+            .split_once(']')
+            .ok_or_else(|| NetError::transport("invalid IPv6 host"))?;
+        if host.parse::<std::net::Ipv6Addr>().is_err() {
+            return Err(NetError::transport("invalid IPv6 host"));
         }
-        _ => (authority, default_port),
+        let port = if suffix.is_empty() {
+            default_port
+        } else {
+            suffix
+                .strip_prefix(':')
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| NetError::transport("invalid port"))?
+        };
+        (host, port)
+    } else if let Some((host, port)) = authority.rsplit_once(':') {
+        if host.contains(':') {
+            return Err(NetError::transport("IPv6 host must be bracketed"));
+        }
+        (
+            host,
+            port.parse()
+                .map_err(|_| NetError::transport("invalid port"))?,
+        )
+    } else {
+        (authority, default_port)
     };
-    let host = host.trim_start_matches('[').trim_end_matches(']');
-    if host.is_empty() {
-        return Err(NetError::transport("missing host"));
+    if host.is_empty() || host.contains(['[', ']', '/', '?', '#', '@']) || port == 0 {
+        return Err(NetError::transport("invalid host or port"));
     }
     Ok((host.to_ascii_lowercase(), port))
 }
@@ -223,6 +257,9 @@ impl Client {
     /// Trusts the Mozilla root set (`webpki-roots`), plus `extra_roots`
     /// (DER) and `SSL_CERT_FILE`.
     pub fn new(user_agent: &str, extra_roots: &[Vec<u8>]) -> NetResult<Client> {
+        if user_agent.contains(['\r', '\n']) {
+            return Err(NetError::transport("invalid user agent"));
+        }
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let config = rustls::ClientConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
@@ -260,7 +297,12 @@ impl Client {
     /// Opens a connection (TLS for `https`) to `url`'s host, through the
     /// configured proxy if any. Used directly by the WebSocket client.
     pub fn open(&self, url: &Url) -> NetResult<Stream> {
-        let tcp = connect(url)?;
+        let proxy = proxy_for(&url.host, url.tls);
+        let tcp = connect(url, proxy.as_deref(), true)?;
+        self.wrap(url, tcp)
+    }
+
+    fn wrap(&self, url: &Url, tcp: TcpStream) -> NetResult<Stream> {
         if !url.tls {
             return Ok(Stream::Plain(tcp));
         }
@@ -271,14 +313,36 @@ impl Client {
         Ok(Stream::Tls(Box::new(rustls::StreamOwned::new(conn, tcp))))
     }
 
+    /// Opens an HTTP connection and supplies the correct origin/absolute request target.
+    /// Shared with WebSocket upgrades so ws:// also works through HTTP proxies.
+    pub(crate) fn open_http(&self, url: &Url) -> NetResult<(Stream, String)> {
+        let proxy = proxy_for(&url.host, url.tls);
+        self.open_http_via(url, proxy.as_deref())
+    }
+
+    fn open_http_via(&self, url: &Url, proxy: Option<&str>) -> NetResult<(Stream, String)> {
+        let tcp = connect(url, proxy, url.tls)?;
+        let target = if !url.tls && proxy.is_some() {
+            format!("http://{}{}", url.authority(), url.path)
+        } else {
+            url.path.clone()
+        };
+        Ok((self.wrap(url, tcp)?, target))
+    }
+
+    /// Send without redirects (for Apple provisioning endpoints and trust boundaries).
+    pub fn send_without_redirects(&self, req: &Request) -> NetResult<Response> {
+        self.send_once(req, &req.url)
+    }
+
     fn send_once(&self, req: &Request, url_str: &str) -> NetResult<Response> {
         let url = Url::parse(url_str)?;
-        let mut tls = self.open(&url)?;
+        let (mut tls, target) = self.open_http(&url)?;
 
         let mut head = format!(
             "{} {} HTTP/1.1\r\nHost: {}\r\n",
             req.method,
-            url.path,
+            target,
             url.authority()
         );
         let has = |name: &str| {
@@ -402,33 +466,41 @@ fn bypasses_proxy(host: &str, no_proxy: &str) -> bool {
         })
 }
 
-fn connect(url: &Url) -> NetResult<TcpStream> {
-    let target = format!("{}:{}", url.host, url.port);
+fn connect(url: &Url, proxy: Option<&str>, tunnel: bool) -> NetResult<TcpStream> {
+    let target = if url.host.contains(':') {
+        format!("[{}]:{}", url.host, url.port)
+    } else {
+        format!("{}:{}", url.host, url.port)
+    };
     let io = |e: std::io::Error| NetError::transport(format!("cannot connect to {target}: {e}"));
-    let stream = match proxy_for(&url.host, url.tls) {
-        None => TcpStream::connect(&target).map_err(io)?,
+    let stream = match proxy {
+        None => TcpStream::connect((url.host.as_str(), url.port)).map_err(io)?,
         Some(proxy) => {
             let authority = proxy
                 .strip_prefix("http://")
-                .ok_or_else(|| NetError::transport("HTTPS_PROXY must be an http:// URL"))?
+                .ok_or_else(|| NetError::transport("proxy must be an http:// URL"))?
                 .trim_end_matches('/');
             let (phost, pport) = split_host_port(authority, 80)?;
             let mut s = TcpStream::connect((phost.as_str(), pport)).map_err(io)?;
             s.set_read_timeout(Some(TIMEOUT)).map_err(io)?;
-            write!(s, "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n").map_err(io)?;
-            let mut r = BufReader::new(s);
-            let (status, _) = read_head(&mut r)?;
-            if status != 200 {
-                return Err(NetError::transport(format!(
-                    "proxy refused CONNECT to {target} (HTTP {status})"
-                )));
+            if !tunnel {
+                s
+            } else {
+                write!(s, "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n").map_err(io)?;
+                let mut r = BufReader::new(s);
+                let (status, _) = read_head(&mut r)?;
+                if status != 200 {
+                    return Err(NetError::transport(format!(
+                        "proxy refused CONNECT to {target} (HTTP {status})"
+                    )));
+                }
+                if !r.buffer().is_empty() {
+                    return Err(NetError::transport(
+                        "proxy sent data before the TLS handshake",
+                    ));
+                }
+                r.into_inner()
             }
-            if !r.buffer().is_empty() {
-                return Err(NetError::transport(
-                    "proxy sent data before the TLS handshake",
-                ));
-            }
-            r.into_inner()
         }
     };
     stream.set_read_timeout(Some(TIMEOUT)).map_err(io)?;
@@ -655,5 +727,61 @@ mod tests {
         let pem = include_str!("../formats/testdata/openssl_cert.pem");
         let both = format!("junk\n{pem}\n{pem}");
         assert_eq!(pem_certificates(&both).len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::*;
+    use std::net::TcpListener;
+    #[test]
+    fn plain_proxy_uses_absolute_form_without_connect() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            reader
+                .get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+            line
+        });
+        let client = Client::new("test", &[]).unwrap();
+        let u = Url::parse("http://anisette.example:6969/v3/client_info").unwrap();
+        let (mut stream, target) = client
+            .open_http_via(&u, Some(&format!("http://{addr}")))
+            .unwrap();
+        write!(
+            stream,
+            "GET {target} HTTP/1.1\r\nHost: {}\r\n\r\n",
+            u.authority()
+        )
+        .unwrap();
+        stream.flush().unwrap();
+        assert_eq!(
+            server.join().unwrap(),
+            "GET http://anisette.example:6969/v3/client_info HTTP/1.1\r\n"
+        );
+    }
+    #[test]
+    fn url_authorities_and_injection() {
+        for bad in [
+            "http://host/\r\nInjected:x",
+            "http://bad host/",
+            "http://[bad]/",
+            "http://host:0/",
+        ] {
+            assert!(Url::parse(bad).is_err());
+        }
+        let u = Url::parse("http://[::1]:6969/v3").unwrap();
+        assert_eq!(u.authority(), "[::1]:6969");
+        assert_eq!(u.join("/x").unwrap(), "http://[::1]:6969/x");
+        assert!(Client::new("agent\r\nInjected: x", &[]).is_err());
     }
 }

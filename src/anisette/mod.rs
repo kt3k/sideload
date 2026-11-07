@@ -22,7 +22,7 @@ use crate::Result;
 /// One set of Anisette headers (name, value), e.g. `X-Apple-I-MD`,
 /// `X-Apple-I-MD-M`, `X-Apple-I-MD-RINFO`, `X-Apple-I-MD-LU`,
 /// `X-Mme-Device-Id`, `X-Apple-I-Client-Time`, ...
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct AnisetteData {
     pub headers: Vec<(String, String)>,
 }
@@ -30,4 +30,29 @@ pub struct AnisetteData {
 pub trait AnisetteProvider {
     /// Returns fresh headers, provisioning the backend first if needed.
     fn headers(&mut self) -> Result<AnisetteData>;
+}
+
+impl std::fmt::Debug for AnisetteData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnisetteData")
+            .field(
+                "header_names",
+                &self.headers.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+/// Select the explicitly configured backend. Local ADI remains unimplemented.
+pub fn provider(settings: &crate::config::Settings) -> Result<Box<dyn AnisetteProvider>> {
+    match &settings.anisette_server {
+        Some(url) => Ok(Box::new(remote_v3::RemoteV3::new(
+            url,
+            &settings.config_dir,
+        )?)),
+        None => Err(crate::Error::new(
+            crate::ErrorCode::AnisetteUnavailable,
+            "local ADI is not implemented yet; use --anisette-server <URL>",
+        )),
+    }
 }
