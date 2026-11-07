@@ -15,7 +15,7 @@ organized and what it depends on.
 | | `commands::diagnostics` | `team` / `device` / `cert` / `app-id` (SPEC 8) |
 | | `pipeline` | Phase and Mode vocabulary, Install Plan |
 | Integration | `net::http` | HTTPS client over rustls (proxy, redirects, extra CAs) |
-| | `sidestore` | Latest SideStore release from GitHub (SPEC 7.7) |
+| | `sidestore` | `install --sidestore`: latest SideStore release from GitHub (SPEC 7.7) |
 | | `anisette::{remote_v3, local_adi}` | Anisette headers (SPEC 9.1, docs/LOCAL_ADI.md) |
 | | `apple::{gsa, developer}` | GrandSlam login, developerservices2 |
 | | `device::{usbmuxd, lockdown, afc, installation_proxy, misagent}` | Device communication (SPEC 10) |

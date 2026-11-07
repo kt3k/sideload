@@ -123,7 +123,7 @@ To keep the tool easy to port, implementations are RECOMMENDED to use these laye
 - When using remote Anisette: an anisette-v3 compatible server.
 - usbmuxd (the usbmuxd daemon on Linux, built in on macOS, Apple Mobile Device Support on Windows).
 - A local filesystem for the configuration directory and the working directory.
-- When `install` is run without `<ipa>`: the GitHub REST API (`api.github.com`) and GitHub release
+- When `install --sidestore` is used: the GitHub REST API (`api.github.com`) and GitHub release
   asset hosts (Section 7.7).
 
 ## 4. Core Domain Model
@@ -270,7 +270,8 @@ The executable name is Implementation-defined.
 ```text
 <cli> [global options] <command>
 
-<cli> install [<ipa>] [install options]   Install an IPA (default: latest SideStore)
+<cli> install <ipa> [install options]     Install an IPA onto a device
+<cli> install -s [install options]        Install the latest SideStore release
 
 # Diagnostics (Section 8)
 <cli> team list                           Check login and look up team IDs
@@ -300,8 +301,10 @@ Global options come before the subcommand.
 
 ### 5.4 Install Options
 
-- `<ipa>`: OPTIONAL. When given, it must pass the validation in Section 5.6. When omitted, the
-  latest SideStore release is downloaded and installed (Section 7.7).
+- `<ipa>`: The IPA to install. Must pass the validation in Section 5.6. Exactly one of `<ipa>`
+  and `--sidestore` MUST be given.
+- `-s`, `--sidestore`: Download and install the latest SideStore release instead of `<ipa>`
+  (Section 7.7).
 - `--udid <UDID>`: Target device.
 - `--team <team_id>`: Team to use.
 - `-o`, `--output <path>`: Write the signed IPA instead of installing it.
@@ -312,8 +315,8 @@ Global options come before the subcommand.
 - `--new-cert`: Do not reuse the existing certificate; recreate it (Section 7.3).
 - `--keep-temp`: Do not delete the working directory.
 
-`--output` and `--dry-run` MUST NOT be combined; the CLI MUST reject the combination with
-`invalid_arguments`.
+`--output` and `--dry-run` MUST NOT be combined, and exactly one of `<ipa>` and `--sidestore`
+MUST be given (neither, or both, is an error); the CLI MUST reject these with `invalid_arguments`.
 
 ### 5.5 Exit Codes
 
@@ -327,9 +330,10 @@ Argument parsing failures also exit with `1`. Printing help (`--help`) exits wit
 
 The following MUST be validated before login or any device communication starts:
 
-- When given, `<ipa>` exists, is a regular file, and has the `.ipa` extension → otherwise `ipa_not_found` /
+- When `--sidestore` is not given, `<ipa>` is given, exists, is a regular file, and has the `.ipa` extension → otherwise `ipa_not_found` /
   `ipa_invalid`.
 - `--output` and `--dry-run` are not both given → `invalid_arguments`.
+- Exactly one of `<ipa>` and `--sidestore` is given → `invalid_arguments`.
 - The parent directory of the `--output` path exists → `output_write_failed`.
 - `--thread-count` is a positive integer → `invalid_arguments`.
 - `--anisette-server` is an `http` or `https` URL → `invalid_arguments`.
@@ -408,7 +412,7 @@ output and error reports.
 
 1. `ValidatingArguments`: Validation from Section 5.6.
 2. `SelectingDevice`: Choose the target device using the rules in Section 10.1.
-3. `DownloadingApp`: Only when `<ipa>` is omitted: download the latest SideStore release into the
+3. `DownloadingApp`: Only with `--sidestore`: download the latest SideStore release into the
    working directory (Section 7.7).
 4. `PreparingBundle`: Extract the IPA into the working directory and apply `--strip-extensions`
    and `--name`.
@@ -488,9 +492,9 @@ Result:       OK | NG: <error_code> <reason>
   resources created by the previous run.
 - The key file MUST NOT be overwritten except by `--new-cert`.
 
-### 7.7 Default App: Latest SideStore Release
+### 7.7 `--sidestore`: Latest SideStore Release
 
-When `install` is run without `<ipa>`, the tool installs the latest release of SideStore.
+With `--sidestore`, the tool installs the latest release of SideStore instead of `<ipa>`.
 
 1. Request `GET https://api.github.com/repos/SideStore/SideStore/releases/latest` with
    `Accept: application/vnd.github+json` and a `User-Agent` naming the tool. This endpoint returns
@@ -762,7 +766,7 @@ with `device_not_paired` and tell the user to choose "Trust This Computer" on th
 
 5. `Artifact Failures`
    - `signing_failed`
-   - `download_failed` (the default SideStore download in Section 7.7)
+   - `download_failed` (the `--sidestore` download in Section 7.7)
 
 6. `Unexpected Failures`
    - `internal_error` (an implementation defect; details are printed with `--debug`)
@@ -801,7 +805,7 @@ RECOMMENDED to include the relevant action.
   - Get detailed logs with `--debug`.
 - `download_failed`
   - Check the network (and `HTTPS_PROXY`), or download `SideStore.ipa` manually and pass its
-    path as `<ipa>`.
+    path as `<ipa>` instead of `--sidestore`.
 - To preview the outcome before running
   - `install --dry-run`.
 
@@ -849,7 +853,7 @@ the quota is insufficient.
 
 ### 14.4 Downloaded Applications
 
-- The default download (Section 7.7) MUST use only the fixed repository `SideStore/SideStore`
+- The `--sidestore` download (Section 7.7) MUST use only the fixed repository `SideStore/SideStore`
   and HTTPS for every request, including redirects.
 - A published SHA-256 digest MUST be verified before the file is used.
 - The downloaded file is treated like a user-supplied IPA: the extraction rules of Section 14.3
@@ -870,7 +874,7 @@ the quota is insufficient.
 function install(args):
   validate_arguments(args)                          # ValidatingArguments
   target = select_device(args.udid, args.mode)      # SelectingDevice
-  ipa = args.ipa or download_latest_sidestore()     # DownloadingApp
+  ipa = args.sidestore ? download_latest_sidestore() : args.ipa  # DownloadingApp
   bundle = prepare_bundle(ipa, args)                # PreparingBundle
 
   anisette = prepare_anisette(config)               # PreparingAnisette
@@ -1042,7 +1046,7 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 - A re-run after a partial failure does not create duplicate resources.
 - The working directory is kept or removed according to `--keep-temp` (including on failure).
 - The IPA written by `--output` contains the signed bundle when extracted.
-- Without `<ipa>`: asset selection by exact name, failure when the asset is missing, size and
+- `--sidestore`: asset selection by exact name, failure when the asset is missing, size and
   SHA-256 digest mismatches fail with `download_failed`, and redirects to plain HTTP are refused.
 
 ### 16.6 Diagnostic Commands
@@ -1076,7 +1080,7 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
   `--bundle-id`, `--name`, `--new-cert`, `--keep-temp`)
 - App ID quota pre-check (no partial registration)
 - Per-App-ID profile retrieval and signing
-- Installing the latest SideStore release when `<ipa>` is omitted (Section 7.7)
+- `install --sidestore` (Section 7.7)
 - The diagnostic commands in Section 8
 - The error codes in Section 13.1 and the exit codes
 - Secret handling and filesystem safety in Section 14
@@ -1129,4 +1133,4 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 11. The executable name is Implementation-defined (upstream uses `sideloader`; this repository's
     implementation uses `sideload`).
 12. Errors are reported with an error code and the phase name.
-13. `install` without `<ipa>` downloads and installs the latest SideStore release from GitHub.
+13. `install --sidestore` downloads and installs the latest SideStore release from GitHub.

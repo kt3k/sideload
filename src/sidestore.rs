@@ -1,4 +1,5 @@
-//! Default app: the latest SideStore release from GitHub (SPEC Section 7.7).
+//! `install --sidestore`: the latest SideStore release from GitHub
+//! (SPEC Section 7.7).
 
 use std::path::{Path, PathBuf};
 

@@ -27,15 +27,19 @@ pub fn run(args: &InstallArgs, _settings: &Settings) -> Result<ExitCode> {
 
     // TODO: SelectingDevice (SPEC Section 10.1) runs before the download.
 
-    let _ipa = match &args.ipa {
-        Some(path) => path.clone(),
-        None => {
-            let client =
-                sidestore::http_client().map_err(|e| e.with_phase(Phase::DownloadingApp))?;
-            sidestore::download_latest(&client, workdir.path())
-                .map_err(|e| e.with_phase(Phase::DownloadingApp))?
-                .0
-        }
+    let _ipa = if args.sidestore {
+        let client = sidestore::http_client().map_err(|e| e.with_phase(Phase::DownloadingApp))?;
+        sidestore::download_latest(&client, workdir.path())
+            .map_err(|e| e.with_phase(Phase::DownloadingApp))?
+            .0
+    } else {
+        args.ipa.clone().ok_or_else(|| {
+            Error::new(
+                ErrorCode::InvalidArguments,
+                "missing argument <ipa> (or use --sidestore)",
+            )
+            .with_phase(Phase::ValidatingArguments)
+        })?
     };
 
     // TODO: remaining phases (SPEC Section 7.2).
