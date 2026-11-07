@@ -10,14 +10,14 @@ implemented elsewhere; the assistant can still review, test, and fix them afterw
 - [x] Apple account login (`src/apple/gsa.rs`, SPEC 9.2): SRP, trusted-device 2FA, Xcode token; live validation pending
 - [x] Developer Services client (`src/apple/developer.rs`, SPEC 9.4): all iOS operations and CSR; live validation pending
 - [ ] Local ADI (`src/anisette/local_adi/`, SPEC 9.1)
+- [ ] Anisette resync on GSA `hsc 434` / `X-Apple-I-MD-DATA` (needs an AnisetteProvider::resync hook; live-only)
 
 ## In progress here
 
 - [ ] Install pipeline wiring and dry-run plan output (SPEC 7)
-- [ ] Diagnostic commands wiring (SPEC 8)
 
 ## Done
 
-Device communication (usbmuxd, pairing records, lockdownd TLS session, AFC,
+Diagnostic commands (team/device/cert/app-id), device communication (usbmuxd, pairing records, lockdownd TLS session, AFC,
 installation_proxy, misagent), credential input (no-echo password, 2FA prompt), CLI, configuration, formats (plist, zip, DER, JSON), crypto, HTTPS/WebSocket client,
 `--sidestore` download, bundle processing, code signing, remote anisette v3.

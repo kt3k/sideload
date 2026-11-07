@@ -2,6 +2,7 @@
 
 pub mod diagnostics;
 pub mod install;
+pub mod session;
 pub mod version;
 
 use std::process::ExitCode;
