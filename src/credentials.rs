@@ -78,9 +78,105 @@ fn prompt_line(prompt: &str) -> Result<String> {
     Ok(line.trim_end_matches(['\r', '\n']).to_owned())
 }
 
-fn prompt_password(_prompt: &str) -> Result<String> {
-    // TODO: no-echo input (add `rpassword`); MUST NOT echo (SPEC Section 9.2).
-    Err(Error::not_implemented("interactive password input"))
+fn prompt_password(prompt: &str) -> Result<String> {
+    // `rpassword` disables echo on the terminal (SPEC Section 9.2).
+    let password = rpassword::prompt_password(prompt)
+        .map_err(|e| Error::new(ErrorCode::CredentialsUnavailable, e.to_string()))?;
+    if password.is_empty() {
+        return Err(Error::new(
+            ErrorCode::CredentialsUnavailable,
+            "empty password",
+        ));
+    }
+    Ok(password)
 }
 
-// TODO: 2FA code input with `resend` and EOF handling (SPEC Section 9.2 step 5).
+/// What the user typed at the 2FA prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodeInput {
+    Code(String),
+    /// `resend`: ask for a new code.
+    Resend,
+}
+
+pub const TWO_FACTOR_PROMPT: &str =
+    "Enter the verification code sent to your devices (type `resend` to send a new one): ";
+
+/// Reads one 2FA answer (SPEC Section 9.2 step 5). Blank lines re-prompt;
+/// end of input fails with `two_factor_failed`. Works with piped input.
+pub fn read_two_factor_code(
+    input: &mut impl BufRead,
+    prompt: &mut impl Write,
+) -> Result<CodeInput> {
+    loop {
+        let _ = prompt.write_all(TWO_FACTOR_PROMPT.as_bytes());
+        let _ = prompt.flush();
+        let mut line = String::new();
+        let read = input
+            .read_line(&mut line)
+            .map_err(|e| Error::new(ErrorCode::TwoFactorFailed, e.to_string()))?;
+        if read == 0 {
+            return Err(Error::new(
+                ErrorCode::TwoFactorFailed,
+                "end of input while waiting for the verification code",
+            ));
+        }
+        let answer = line.trim();
+        if answer.is_empty() {
+            continue;
+        }
+        if answer.eq_ignore_ascii_case("resend") {
+            return Ok(CodeInput::Resend);
+        }
+        return Ok(CodeInput::Code(answer.to_owned()));
+    }
+}
+
+/// `read_two_factor_code` on stdin, prompting on stderr.
+pub fn prompt_two_factor_code() -> Result<CodeInput> {
+    read_two_factor_code(&mut std::io::stdin().lock(), &mut std::io::stderr())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn two_factor_input() {
+        let mut out = Vec::new();
+        let mut input = Cursor::new(b"\n  123456 \nresend\nRESEND\n".to_vec());
+        assert_eq!(
+            read_two_factor_code(&mut input, &mut out).unwrap(),
+            CodeInput::Code("123456".into())
+        );
+        assert_eq!(
+            read_two_factor_code(&mut input, &mut out).unwrap(),
+            CodeInput::Resend
+        );
+        assert_eq!(
+            read_two_factor_code(&mut input, &mut out).unwrap(),
+            CodeInput::Resend
+        );
+        let e = read_two_factor_code(&mut input, &mut out).unwrap_err();
+        assert_eq!(e.code, ErrorCode::TwoFactorFailed);
+        // One prompt per read, including the re-prompt after the blank line and the final EOF.
+        assert_eq!(
+            String::from_utf8(out)
+                .unwrap()
+                .matches(TWO_FACTOR_PROMPT)
+                .count(),
+            5
+        );
+    }
+
+    #[test]
+    fn credentials_debug_redacts_password() {
+        let c = Credentials {
+            apple_id: "a@b.c".into(),
+            password: "hunter2".into(),
+        };
+        let d = format!("{c:?}");
+        assert!(d.contains("a@b.c") && !d.contains("hunter2"));
+    }
+}

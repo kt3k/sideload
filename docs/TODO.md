@@ -13,12 +13,11 @@ implemented elsewhere; the assistant can still review, test, and fix them afterw
 
 ## In progress here
 
-- [ ] Credential input: no-echo password, 2FA code prompt (SPEC 9.2)
 - [ ] Install pipeline wiring and dry-run plan output (SPEC 7)
 - [ ] Diagnostic commands wiring (SPEC 8)
 - [ ] Device communication (`src/device/`, SPEC 10)
 
 ## Done
 
-CLI, configuration, formats (plist, zip, DER, JSON), crypto, HTTPS/WebSocket client,
+Credential input (no-echo password, 2FA prompt), CLI, configuration, formats (plist, zip, DER, JSON), crypto, HTTPS/WebSocket client,
 `--sidestore` download, bundle processing, code signing, remote anisette v3.
