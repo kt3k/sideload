@@ -320,3 +320,13 @@ fn openssl_verifies_generated_csr() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn app_names_are_normalized_to_alphanumeric() {
+    use super::normalize_app_name;
+    assert_eq!(normalize_app_name("My App!"), "MyApp");
+    assert_eq!(normalize_app_name("café™"), "caf");
+    assert_eq!(normalize_app_name("日本語"), "App");
+    assert_eq!(normalize_app_name(""), "App");
+    assert_eq!(normalize_app_name("Widget2"), "Widget2");
+}

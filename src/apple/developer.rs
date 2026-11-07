@@ -343,7 +343,7 @@ impl<T: Transport> Developer<T> {
     pub fn add_app_id(&mut self, t: &str, identifier: &str, name: &str) -> Result<AppId> {
         let mut body = team(t);
         body.insert("identifier", identifier);
-        body.insert("name", name);
+        body.insert("name", normalize_app_name(name));
         let p = self.call("addAppId", body)?;
         parse_app(p.get("appId").ok_or_else(|| malformed("appId"))?)
     }
@@ -376,7 +376,7 @@ impl<T: Transport> Developer<T> {
     pub fn add_app_group(&mut self, t: &str, identifier: &str, name: &str) -> Result<AppGroup> {
         let mut body = team(t);
         body.insert("identifier", identifier);
-        body.insert("name", name);
+        body.insert("name", normalize_app_name(name));
         let p = self.call("addApplicationGroup", body)?;
         parse_group(
             p.get("applicationGroup")
@@ -443,6 +443,18 @@ fn parse_group(v: &Value) -> Result<AppGroup> {
         name: optional(v, "name"),
     })
 }
+/// Apple rejects App ID and App Group names containing non-alphanumeric
+/// characters, so keep only ASCII alphanumerics (upstream does the same),
+/// falling back to `App` when nothing remains.
+pub fn normalize_app_name(name: &str) -> String {
+    let kept: String = name.chars().filter(char::is_ascii_alphanumeric).collect();
+    if kept.is_empty() {
+        "App".to_owned()
+    } else {
+        kept
+    }
+}
+
 /// PKCS#10 SHA256/RSA CSR for development certificate submission.
 pub fn make_csr(
     key: &crate::crypto::rsa_keygen::RsaPrivateKey,
