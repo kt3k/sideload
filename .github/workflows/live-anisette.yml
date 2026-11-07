@@ -1,0 +1,66 @@
+name: Live Anisette
+
+# Runs the opt-in live local-Anisette test (tests/local_adi_live.rs) on real
+# runners: native Apple ADI libraries (Linux/Windows) or AOSKit (macOS),
+# Apple provisioning, and two OTP requests. No Apple ID is used.
+#
+# Manual only: every run provisions a new machine with Apple from a
+# data-center IP, so do not run it on every push.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  live:
+    name: Live Anisette ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            abi: x86_64
+          - name: windows-x86_64
+            os: windows-latest
+            abi: x86_64
+          - name: macos-arm64
+            os: macos-latest
+            abi: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Fetch Apple's ADI libraries
+        if: matrix.abi != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o applemusic.apk \
+            https://apps.mzstatic.com/content/android-apple-music-apk/applemusic.apk
+          py=$(command -v python3 || command -v python)
+          "$py" - "${{ matrix.abi }}" <<'EOF'
+          import os, sys, zipfile
+          abi = sys.argv[1]
+          os.makedirs("adi-lib", exist_ok=True)
+          with zipfile.ZipFile("applemusic.apk") as z:
+              for name in ("libstoreservicescore.so", "libCoreADI.so"):
+                  with open(os.path.join("adi-lib", name), "wb") as f:
+                      f.write(z.read(f"lib/{abi}/{name}"))
+          EOF
+          ls -l adi-lib
+          dir="$PWD/adi-lib"
+          # Git Bash on Windows: hand Rust a native path.
+          if command -v cygpath >/dev/null; then dir=$(cygpath -w "$dir"); fi
+          echo "SIDELOAD_ADI_LIBRARY_DIR=$dir" >> "$GITHUB_ENV"
+
+      - name: Live test
+        shell: bash
+        run: cargo test --test local_adi_live -- --ignored --nocapture
