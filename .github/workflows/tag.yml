@@ -1,0 +1,61 @@
+name: Tag release
+
+# Cut a release tag from main and build it, without pushing a tag by hand.
+#
+# A tag pushed with GITHUB_TOKEN does not trigger other workflows' `push`
+# events, so this workflow creates the GitHub Release itself and then
+# dispatches release.yml for the new tag (workflow_dispatch is allowed).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag to create, e.g. v0.1.1 (must match Cargo.toml)"
+        required: true
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag ${{ inputs.version }}
+    runs-on: ubuntu-22.04
+    env:
+      TAG: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must look like v1.2.3 (got '$TAG')"; exit 1
+          fi
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          if [ "v$crate" != "$TAG" ]; then
+            echo "::error::Cargo.toml version is $crate, not ${TAG#v}"; exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::tag $TAG already exists"; exit 1
+          fi
+
+      - name: Create and push tag
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
+
+      # Created here, once, so the parallel build jobs only upload assets.
+      - name: Create release
+        run: gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+
+      - name: Build binaries
+        run: gh workflow run release.yml --ref "$TAG" -f tag="$TAG"
