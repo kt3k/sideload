@@ -14,10 +14,9 @@ Checked items have implementation and mock coverage; live validation is noted ex
 
 ## In progress here
 
-- [ ] Install pipeline wiring and dry-run plan output (SPEC 7)
 
 ## Done
 
-Diagnostic commands (team/device/cert/app-id), device communication (usbmuxd, pairing records, lockdownd TLS session, AFC,
+Install pipeline (all phases, dry-run plan, --output, device delivery), diagnostic commands (team/device/cert/app-id), device communication (usbmuxd, pairing records, lockdownd TLS session, AFC,
 installation_proxy, misagent), credential input (no-echo password, 2FA prompt), CLI, configuration, formats (plist, zip, DER, JSON), crypto, HTTPS/WebSocket client,
 `--sidestore` download, bundle processing, code signing, remote anisette v3.

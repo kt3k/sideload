@@ -1,6 +1,7 @@
 //! Command handlers (Coordination layer).
 
 pub mod cert_identity;
+pub mod deliver;
 pub mod diagnostics;
 pub mod install;
 pub mod session;

@@ -15,6 +15,8 @@ use crate::{
     net::http::Request,
 };
 const BASE: &str = "https://developerservices2.apple.com/services/QH65B2/";
+/// Apple's feature key that enables App Groups on an App ID.
+pub const APP_GROUP_FEATURE: &str = "APG3427HIY";
 fn malformed(field: &str) -> Error {
     Error::new(
         ErrorCode::AppleApiError,
