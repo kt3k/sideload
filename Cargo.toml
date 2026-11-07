@@ -12,6 +12,7 @@ license = "MIT"
 [dependencies]
 aes = "0.8"
 lexopt = "0.3"
+libc = "0.2"
 miniz_oxide = "0.9.1"
 num-bigint = "0.4"
 num-integer = "0.1"

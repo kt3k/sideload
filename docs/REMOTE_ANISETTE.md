@@ -60,5 +60,6 @@ handshake validation, fragments with ping/pong, close, and invalid/reserved/mask
 The TCP test needs permission to bind a loopback port in restricted execution environments.
 
 These checks do not contact live Apple or anisette services. Live interoperability remains
-unverified. Local ADI, Apple login/developer APIs, diagnostics, and the install pipeline remain
-unimplemented; the provider factory gives an actionable error when local ADI is selected.
+unverified. Apple login and Developer Services APIs and diagnostic commands are implemented; install
+wiring remains pending. The provider factory selects local ADI by default on supported Linux
+hosts; see LOCAL_ADI.md for its partial rollout and remaining platform/validation work.

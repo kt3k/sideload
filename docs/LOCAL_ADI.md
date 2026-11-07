@@ -178,3 +178,55 @@ for this document; nothing was run.
   3. Windows x86_64: `extern "sysv64"` hooks and trampolines, CRT and `stat` shims.
 - Keep the upstream file layout (`<config>/lib/*.so`, `<config>/device.json`, and ADI state under
   `<config>`) so that a machine provisioned by Sideloader is reused as-is.
+
+## 9. Current implementation in this repository
+
+`anisette::provider` now selects `local_adi::LocalAdi` when no remote server is configured.
+This is a **partial rollout** of SPEC 9.1: Linux x86_64/aarch64 loaders are implemented;
+macOS and Windows return `anisette_unavailable` before downloading, with a remote-provider
+suggestion. Linux x86_64 was checked with the official current APK. ARM64 has format/relocation
+support but has not been run on real hardware. The full multi-OS TODO remains open.
+
+On first use, `download::ensure` obtains Apple's HTTPS APK, extracts only the architecture's
+two libraries, validates ELF metadata, and installs each with a private temporary file and
+rename under `config/lib`. Download start/completion show 0% and 100%; intermediate byte-level
+progress is not implemented. The proprietary libraries are not redistributed in this repository.
+Existing library files are reused. Treat this directory as executable code, not untrusted input.
+
+The loader checks ELF64 program headers, file-backed dynamic addresses, symbol/relocation
+bounds, machine type, and relocation kinds before mapping. It applies REL/RELA relocations and
+separates executable from writable pages; incompatible large-page segment layouts fail rather
+than creating writable/executable pages. General ELF constructors and TLS segments are not
+supported. This loader is specifically for the ADI entry points, not the rest of Apple Music.
+
+Native calls stay on the owning thread. The bionic hooks expose a narrow Linux libc ABI surface,
+implement Android dlopen/dlsym only for the owned CoreADI mapping, and keep Android pthread
+objects away from glibc. Thread creation fails with ENOSYS. Unresolved imports point to an
+abort trap; calling unsupported portions of the Android libraries terminates the process.
+The initialization smoke test exercises the required ADI setup and an unprovisioned-state query.
+It does not establish that every later vendor-code path is compatible.
+
+`device.json` uses the upstream field names and reuses an existing valid identity. New files
+are private (0600). ADI's provisioning files are kept under `config/lib`, matching SPEC 4.1.1.
+Provisioning relays Apple's lookup/start/finish exchange directly, destroys native sessions
+on failure, and produces fresh machine/OTP headers. This protocol is tested with fake native
+and Apple transports. Device identity, native buffers, and ADI state are never logged.
+
+Tests:
+
+```sh
+cargo test
+cargo clippy --all-targets -- -D warnings
+SIDELOAD_ADI_LIBRARY_DIR=/path/to/extracted/x86_64 cargo test native_adi_initialization_smoke -- --ignored
+```
+
+The deterministic ELF fixture executes a tiny function and checks its relative relocation;
+malformed headers and unsupported relocations are rejected. Mock provisioning tests verify
+stable identity, one-time provisioning, fresh OTPs, and cleanup after a failed exchange.
+
+**Still unverified:** live Apple provisioning and OTP generation with the native libraries.
+The attempted live check was rejected by automatic approval review because it would send a new
+device identifier and ADI data to Apple's provisioning servers without destination-specific
+user authorization. It was not executed. macOS/Windows ABI hooks, ARM hardware tests, large-page
+load shifting, and ADI resynchronization remain follow-up work; do not treat this as full
+SPEC 9.1 conformance.

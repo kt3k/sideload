@@ -4,12 +4,12 @@ Status against [SPEC.md](../SPEC.md).
 
 ## Needs another implementer
 
-The assistant that wrote most of this repository could not complete these parts. They should be
-implemented elsewhere; the assistant can still review, test, and fix them afterwards.
+These service backends are tracked separately from the command/pipeline wiring below.
+Checked items have implementation and mock coverage; live validation is noted explicitly.
 
 - [x] Apple account login (`src/apple/gsa.rs`, SPEC 9.2): SRP, trusted-device 2FA, Xcode token; live validation pending
 - [x] Developer Services client (`src/apple/developer.rs`, SPEC 9.4): all iOS operations and CSR; live validation pending
-- [ ] Local ADI (`src/anisette/local_adi/`, SPEC 9.1)
+- [ ] Local ADI (`src/anisette/local_adi/`, SPEC 9.1): Linux loader/provisioning implemented and x86_64 initialization checked; macOS/Windows and live OTP validation remain
 - [ ] Anisette resync on GSA `hsc 434` / `X-Apple-I-MD-DATA` (needs an AnisetteProvider::resync hook; live-only)
 
 ## In progress here

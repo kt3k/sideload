@@ -242,6 +242,7 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "lexopt",
+ "libc",
  "miniz_oxide",
  "num-bigint",
  "num-integer",

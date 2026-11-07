@@ -4,17 +4,10 @@
 //! and Developer Services requests. Two backends:
 //! - `remote_v3`: an anisette-v3 compatible server (all platforms).
 //! - `local_adi`: Apple's Android ADI libraries loaded in-process
-//!   (Linux and macOS on x86_64 / aarch64, Windows on x86_64; SPEC 9.1).
+//!   (Linux x86_64 / aarch64 implemented; other SPEC 9.1 hosts pending).
 
 pub mod remote_v3;
 
-#[cfg(any(
-    all(
-        any(target_os = "linux", target_os = "macos"),
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    ),
-    all(target_os = "windows", target_arch = "x86_64")
-))]
 pub mod local_adi;
 
 use crate::Result;
@@ -50,9 +43,6 @@ pub fn provider(settings: &crate::config::Settings) -> Result<Box<dyn AnisettePr
             url,
             &settings.config_dir,
         )?)),
-        None => Err(crate::Error::new(
-            crate::ErrorCode::AnisetteUnavailable,
-            "local ADI is not implemented yet; use --anisette-server <URL>",
-        )),
+        None => Ok(Box::new(local_adi::LocalAdi::new(&settings.config_dir)?)),
     }
 }

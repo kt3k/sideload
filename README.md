@@ -8,7 +8,8 @@ A reduced, corrected Rust port of the [Sideloader](https://github.com/Dadoum/Sid
 **Status:** early. Argument parsing, configuration resolution, argument validation, and the
 format layer (plist XML/binary, ZIP, DER, JSON), crypto (SRP, AES, RSA), HTTP/WebSocket clients, remote anisette v3, the
 `--sidestore` download, IPA/bundle processing, and the in-process code signer work. Apple
-login/developer services, device communication, and the install pipeline are not implemented yet;
+login/developer APIs and device communication are implemented; Linux local ADI is in partial
+rollout (see docs/LOCAL_ADI.md). Diagnostic commands are wired; install pipeline wiring remains pending;
 `install --output` is not wired up. See [docs/SIGNING.md](docs/SIGNING.md) for the signing API,
 validation, and current limitations.
 
