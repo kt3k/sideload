@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
 
-use crate::apple::Https;
+use crate::apple::Transport;
 use crate::apple::developer::{self, Developer};
 use crate::bundle::{self, AppBundle};
 use crate::cli::InstallArgs;
@@ -187,12 +187,15 @@ pub fn run(args: &InstallArgs, settings: &Settings) -> Result<ExitCode> {
     }
 
     // PreparingCertificate (SPEC Section 7.3).
-    let identity = cert_identity::prepare(
-        &mut dev,
-        &team.team_id,
-        &settings.config_dir,
-        &auth.apple_id,
-        args.new_cert,
+    let identity = phase(
+        cert_identity::prepare(
+            &mut dev,
+            &team.team_id,
+            &settings.config_dir,
+            &auth.apple_id,
+            args.new_cert,
+        ),
+        Phase::PreparingCertificate,
     )?;
 
     // RegisteringAppIds + ConfiguringAppGroup + FetchingProfiles.
@@ -262,8 +265,8 @@ fn device_name(target: &Target) -> String {
 
 /// Builds the Install Plan without changing Apple-side state (SPEC 15.2).
 #[allow(clippy::too_many_arguments)]
-fn build_plan(
-    dev: &mut Developer<Https>,
+fn build_plan<T: Transport>(
+    dev: &mut Developer<T>,
     team: &developer::Team,
     target: Option<&Target>,
     app: &AppBundle,
@@ -298,7 +301,9 @@ fn build_plan(
         })
         .collect();
     let to_register = app_ids.iter().filter(|a| !a.exists).count();
-    let available = listed.available_quantity.unwrap_or(0).max(0) as u32;
+    // Paid teams omit availableQuantity: that means no App ID quota, as in
+    // Sideloader (ulong.max) and isideload (only checked when present).
+    let available = listed.available_quantity.map(|a| a.max(0) as u32);
 
     // Certificate action: inspect the local key and the account's certs.
     let key = read_key_if_present(settings, apple_id);
@@ -316,7 +321,7 @@ fn build_plan(
         identifier: group_id,
     };
 
-    let blocker = if to_register as u32 > available {
+    let blocker = if let Some(available) = available.filter(|&a| to_register as u32 > a) {
         let soonest = listed
             .app_ids
             .iter()
@@ -343,7 +348,7 @@ fn build_plan(
         certificate_action,
         app_ids,
         available_quantity: available,
-        max_quantity: listed.max_quantity.unwrap_or(0) as u32,
+        max_quantity: listed.max_quantity.map(|m| m as u32),
         app_group,
         blocker,
     })
@@ -358,8 +363,8 @@ fn read_key_if_present(settings: &Settings, apple_id: &str) -> Option<RsaPrivate
 /// Registers missing App IDs, enables and assigns the App Group, and
 /// downloads each App ID's provisioning profile. Returns a map from bundle
 /// identifier to profile bytes.
-fn provision_app_ids(
-    dev: &mut Developer<Https>,
+fn provision_app_ids<T: Transport>(
+    dev: &mut Developer<T>,
     team_id: &str,
     app: &mut AppBundle,
     main_id: &str,
@@ -409,18 +414,26 @@ fn provision_app_ids(
         }
     }
 
-    // Create the App Group if needed, and assign it to each App ID.
-    let groups = dev.list_app_groups(team_id)?;
-    if !groups.iter().any(|g| g.identifier == group_id) {
-        output::info(format!("Creating App Group {group_id}..."));
-        dev.add_app_group(team_id, &group_id, &group_name)?;
-    }
+    // Create the App Group if needed, and assign it to each App ID. The
+    // assignment takes the group's server-side ID (`applicationGroup`), not
+    // its `group.<id>` identifier, as Sideloader and isideload do.
+    let existing_group = dev
+        .list_app_groups(team_id)?
+        .into_iter()
+        .find(|g| g.identifier == group_id);
+    let group = match existing_group {
+        Some(g) => g,
+        None => {
+            output::info(format!("Creating App Group {group_id}..."));
+            dev.add_app_group(team_id, &group_id, &group_name)?
+        }
+    };
     for (identifier, _) in &needed {
         let app_id = app_ids
             .iter()
             .find(|a| &a.identifier == identifier)
             .expect("checked above");
-        dev.assign_app_group(team_id, &app_id.app_id_id, &group_id)?;
+        dev.assign_app_group(team_id, &app_id.app_id_id, &group.application_group)?;
     }
 
     // SideStore reads its app group from ALTAppGroups (SPEC Section 11.1).
@@ -447,6 +460,10 @@ fn provision_app_ids(
         profiles.insert(identifier.clone(), profile.encoded_profile);
     }
     Ok(profiles)
+}
+
+fn quota(q: Option<u32>) -> String {
+    q.map_or_else(|| "unlimited".to_owned(), |q| q.to_string())
 }
 
 fn print_plan(plan: &InstallPlan) {
@@ -477,7 +494,8 @@ fn print_plan(plan: &InstallPlan) {
     println!("Certificate:  {cert}");
     println!(
         "App IDs:      need {need}, already registered {registered}, will register {to_register} (available: {} / max: {})",
-        plan.available_quantity, plan.max_quantity
+        quota(plan.available_quantity),
+        quota(plan.max_quantity)
     );
     for a in &plan.app_ids {
         println!(
@@ -652,5 +670,253 @@ mod tests {
         a.output = None;
         a.dry_run = true;
         assert_eq!(mode(&a), Mode::DryRun);
+    }
+
+    // ---- build_plan / provision_app_ids against a scripted Developer API ----
+
+    use crate::anisette::{AnisetteData, AnisetteProvider};
+    use crate::apple::gsa::Session;
+    use crate::formats::plist::{Dictionary, Value};
+    use crate::net::NetResult;
+    use crate::net::http::{Request, Response};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    struct NoAnisette;
+    impl AnisetteProvider for NoAnisette {
+        fn headers(&mut self) -> Result<AnisetteData> {
+            Ok(AnisetteData::default())
+        }
+    }
+
+    /// Replies per Developer Services action; records (action, request).
+    #[derive(Default)]
+    struct Script {
+        replies: BTreeMap<&'static str, Dictionary>,
+        calls: Vec<(String, Value)>,
+    }
+    struct Wire(Rc<RefCell<Script>>);
+    impl Transport for Wire {
+        fn send(&mut self, r: &Request) -> NetResult<Response> {
+            let action = r
+                .url
+                .rsplit('/')
+                .next()
+                .unwrap()
+                .split(".action")
+                .next()
+                .unwrap()
+                .to_owned();
+            let body = crate::formats::plist::from_bytes(&r.body).unwrap();
+            let mut script = self.0.borrow_mut();
+            script.calls.push((action.clone(), body));
+            let mut reply = script
+                .replies
+                .get(action.as_str())
+                .cloned()
+                .unwrap_or_default();
+            reply.insert("resultCode", 0i64);
+            Ok(Response {
+                status: 200,
+                headers: Vec::new(),
+                body: Value::Dictionary(reply).to_xml(),
+                url: r.url.clone(),
+            })
+        }
+    }
+
+    fn dict<const N: usize>(e: [(&str, Value); N]) -> Dictionary {
+        e.into_iter().collect()
+    }
+
+    fn developer(script: &Rc<RefCell<Script>>) -> Developer<Wire> {
+        Developer::with_transport(
+            Session {
+                adsid: "1".into(),
+                token: "T".into(),
+                expiry: None,
+            },
+            Box::new(NoAnisette),
+            Wire(script.clone()),
+        )
+    }
+
+    fn sample_app(dir: &Path) -> AppBundle {
+        let path = dir.join("Payload/A.app");
+        std::fs::create_dir_all(&path).unwrap();
+        let info = dict([
+            ("CFBundleIdentifier", Value::from("com.example.a.TEAM")),
+            ("CFBundleName", Value::from("A")),
+            ("CFBundleExecutable", Value::from("A")),
+        ]);
+        std::fs::write(path.join("Info.plist"), Value::Dictionary(info).to_xml()).unwrap();
+        AppBundle::load(&path).unwrap()
+    }
+
+    fn settings(dir: &Path) -> Settings {
+        Settings {
+            debug: false,
+            thread_count: std::num::NonZeroUsize::MIN,
+            anisette_server: None,
+            config_dir: dir.to_path_buf(),
+        }
+    }
+
+    fn team() -> developer::Team {
+        developer::Team {
+            team_id: "TEAM".into(),
+            name: Some("Me".into()),
+            kind: None,
+        }
+    }
+
+    fn app_id(available: Option<i64>, existing: &[&str]) -> Dictionary {
+        let ids: Vec<Value> = existing
+            .iter()
+            .map(|id| {
+                Value::Dictionary(dict([
+                    ("appIdId", Value::from(format!("ID-{id}"))),
+                    ("identifier", Value::from(*id)),
+                    ("name", Value::from("A")),
+                    ("features", Value::Dictionary(Dictionary::new())),
+                ]))
+            })
+            .collect();
+        let mut d = dict([("appIds", Value::Array(ids))]);
+        if let Some(a) = available {
+            d.insert("availableQuantity", a);
+            d.insert("maxQuantity", 10i64);
+        }
+        d
+    }
+
+    fn base_script(app_ids: Dictionary) -> Rc<RefCell<Script>> {
+        let mut s = Script::default();
+        s.replies.insert("listAppIds", app_ids);
+        s.replies
+            .insert("listDevices", dict([("devices", Value::Array(vec![]))]));
+        s.replies.insert(
+            "listAllDevelopmentCerts",
+            dict([("certificates", Value::Array(vec![]))]),
+        );
+        s.replies.insert(
+            "listApplicationGroups",
+            dict([("applicationGroupList", Value::Array(vec![]))]),
+        );
+        Rc::new(RefCell::new(s))
+    }
+
+    #[test]
+    fn missing_quota_means_unlimited_paid_team() {
+        let dir = TempDir::new("plan-paid");
+        let app = sample_app(&dir.0);
+        let script = base_script(app_id(None, &[]));
+        let plan = build_plan(
+            &mut developer(&script),
+            &team(),
+            None,
+            &app,
+            "com.example.a.TEAM",
+            &settings(&dir.0),
+            "a@b.c",
+            false,
+        )
+        .unwrap();
+        assert!(
+            plan.feasible(),
+            "paid teams report no quota and must not be blocked"
+        );
+        assert_eq!(plan.available_quantity, None);
+        assert_eq!(quota(plan.available_quantity), "unlimited");
+    }
+
+    #[test]
+    fn exhausted_free_quota_blocks_without_changes() {
+        let dir = TempDir::new("plan-free");
+        let app = sample_app(&dir.0);
+        let script = base_script(app_id(Some(0), &[]));
+        let plan = build_plan(
+            &mut developer(&script),
+            &team(),
+            None,
+            &app,
+            "com.example.a.TEAM",
+            &settings(&dir.0),
+            "a@b.c",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            plan.blocker.as_ref().map(|b| b.0),
+            Some(ErrorCode::AppIdQuotaExceeded)
+        );
+        // Planning only reads.
+        let actions: Vec<String> = script.borrow().calls.iter().map(|c| c.0.clone()).collect();
+        assert!(actions.iter().all(|a| a.starts_with("list")), "{actions:?}");
+    }
+
+    #[test]
+    fn app_group_is_assigned_by_its_server_side_id() {
+        let dir = TempDir::new("plan-group");
+        let mut app = sample_app(&dir.0);
+        let script = base_script(app_id(Some(10), &["com.example.a.TEAM"]));
+        script.borrow_mut().replies.insert(
+            "addApplicationGroup",
+            dict([(
+                "applicationGroup",
+                Value::Dictionary(dict([
+                    ("applicationGroup", Value::from("SERVER-GROUP-ID")),
+                    ("identifier", Value::from("group.com.example.a.TEAM")),
+                ])),
+            )]),
+        );
+        script.borrow_mut().replies.insert(
+            "updateAppId",
+            dict([(
+                "appId",
+                Value::Dictionary(dict([
+                    ("appIdId", Value::from("ID-com.example.a.TEAM")),
+                    ("identifier", Value::from("com.example.a.TEAM")),
+                    ("name", Value::from("A")),
+                    ("features", Value::Dictionary(Dictionary::new())),
+                ])),
+            )]),
+        );
+        script.borrow_mut().replies.insert(
+            "downloadTeamProvisioningProfile",
+            dict([(
+                "provisioningProfile",
+                Value::Dictionary(dict([
+                    ("provisioningProfileId", Value::from("P")),
+                    ("appIdId", Value::from("ID-com.example.a.TEAM")),
+                    ("encodedProfile", Value::Data(b"profile".to_vec())),
+                ])),
+            )]),
+        );
+        let profiles = provision_app_ids(
+            &mut developer(&script),
+            "TEAM",
+            &mut app,
+            "com.example.a.TEAM",
+            "com.example.a",
+        )
+        .unwrap();
+        assert_eq!(
+            profiles.get("com.example.a.TEAM").map(Vec::as_slice),
+            Some(&b"profile"[..])
+        );
+        let calls = &script.borrow().calls;
+        let assign = calls
+            .iter()
+            .find(|c| c.0 == "assignApplicationGroupToAppId")
+            .expect("assigned");
+        assert_eq!(
+            assign.1.get("applicationGroups").and_then(Value::as_str),
+            Some("SERVER-GROUP-ID")
+        );
+        assert_eq!(
+            assign.1.get("appIdId").and_then(Value::as_str),
+            Some("ID-com.example.a.TEAM")
+        );
     }
 }

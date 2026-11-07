@@ -2,7 +2,7 @@
 //! constructing thread. Returned native buffers are copied and disposed.
 use super::{AdiResult, fail, hooks, loader::Library, provisioning::Engine};
 use std::{
-    ffi::{CString, c_void},
+    ffi::{CString, c_char, c_void},
     path::Path,
 };
 pub struct Adi {
@@ -44,8 +44,8 @@ impl Adi {
         let path = CString::new(lib.as_os_str().as_bytes())
             .map_err(|_| fail("NUL in ADI library path"))?;
         let identifier = CString::new(android_id).map_err(|_| fail("NUL in Android identifier"))?;
-        type PathFn = unsafe extern "C" fn(*const i8) -> i32;
-        type IdFn = unsafe extern "C" fn(*const i8, u32) -> i32;
+        type PathFn = unsafe extern "C" fn(*const c_char) -> i32;
+        type IdFn = unsafe extern "C" fn(*const c_char, u32) -> i32;
         let load: PathFn = unsafe { std::mem::transmute(adi.address("kq56gsgHG6")?) };
         let provisioning: PathFn = unsafe { std::mem::transmute(adi.address("nf92ngaK92")?) };
         let set_id: IdFn = unsafe { std::mem::transmute(adi.address("Sph98paBcz")?) };

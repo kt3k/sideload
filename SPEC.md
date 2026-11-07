@@ -405,7 +405,9 @@ This section is intentionally redundant with the rest of the document.
 - `Install` (default): Installs onto the device.
 - `Output` (`--output`): Writes the signed IPA. A connected device is OPTIONAL.
 - `DryRun` (`--dry-run`): Prints the Install Plan and exits. MUST NOT write anything to the Apple
-  side, to the device, or to the configuration directory (including key generation).
+  side or to the device, and MUST NOT generate or replace the signing key. The only configuration
+  directory writes allowed are those logging in itself requires: anisette state (local ADI
+  libraries, `device.json`, ADI provisioning data, remote anisette state).
 
 ### 7.2 Phases
 

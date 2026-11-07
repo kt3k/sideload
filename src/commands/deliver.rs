@@ -123,13 +123,9 @@ pub fn deliver(
     afc.make_directory(STAGING)?;
     upload_tree(&mut afc, app_dir, &remote_app)?;
 
-    // Install the provisioning profiles.
-    let misagent_stream = open_service(
-        &mut lockdown,
-        device_id,
-        misagent::SERVICE,
-        pairing.escrow_bag.as_deref(),
-    )?;
+    // Install the provisioning profiles. Like upstream, misagent is started
+    // without the escrow bag (that is only for services used while locked).
+    let misagent_stream = open_service(&mut lockdown, device_id, misagent::SERVICE, None)?;
     let mut misagent = MisagentClient::new(misagent_stream);
     for profile in profiles {
         misagent.install(profile)?;

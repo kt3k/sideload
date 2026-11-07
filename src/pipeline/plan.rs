@@ -39,8 +39,9 @@ pub struct InstallPlan {
     pub device_action: DeviceAction,
     pub certificate_action: CertificateAction,
     pub app_ids: Vec<PlannedAppId>,
-    pub available_quantity: u32,
-    pub max_quantity: u32,
+    /// `None`: Apple reported no quota (paid teams).
+    pub available_quantity: Option<u32>,
+    pub max_quantity: Option<u32>,
     pub app_group: PlannedAppGroup,
     /// `None` when feasible; otherwise the reason (SPEC Section 4.1.11).
     pub blocker: Option<(ErrorCode, String)>,
