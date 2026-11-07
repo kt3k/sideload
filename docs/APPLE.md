@@ -20,3 +20,26 @@ bundled root are trusted. This is trust-store verification, not leaf/SPKI pinnin
 verify both password protocols, proof mismatch, 2FA retries/relogin, app-token checksum
 and GCM authentication. No real Apple account was used; live interoperability remains
 unverified. These APIs are not yet wired to diagnostic commands or `install`.
+
+## Developer Services
+
+`Developer::from_authenticated(session, gsa)` reuses the authenticated transport and
+anisette provider. `Developer::new` creates another verified-TLS transport when needed.
+Every operation supplies fresh anisette, `X-Apple-GS-Token`, ADSID, QH65B2/client IDs,
+a random request UUID, and locale. Operations cover SPEC 9.4's teams, devices,
+development certificates, App IDs/quota, groups/assignment, and profiles. Team listing
+uses the platform-independent route; other calls use the iOS route. Certificates known
+to belong to another platform are filtered out.
+
+Mutation arguments are explicit Apple identifiers. Callers implement dry-run planning,
+quota preflight, ambiguity checks, and printing certificates before revocation; the
+transport never retries mutations. Nonzero result codes fail even when a partial payload
+is present. Errors include the result code and sanitized description; unrecognized codes
+use `apple_api_error`. Explicit limit descriptions map to the corresponding resource
+limit error. Profile responses must match the requested `appIdId`.
+
+`make_csr` produces a PKCS#10 SHA256/RSA CSR. `submit_development_csr` uses machine name
+`Sideloader` and returns Apple's certRequestId; list certificates afterwards to retrieve
+the issued certificate. The CSR is checked by OpenSSL in tests. Mock API tests exercise
+every operation, metadata, error payloads, profile isolation, and reserved feature keys.
+Live Developer Services mutations were not run.
