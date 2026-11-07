@@ -28,7 +28,7 @@ fn exactly_one<'a, T>(matches: Vec<&'a T>, nothing: ErrorCode, what: &str) -> Re
 }
 
 pub fn team_list(settings: &Settings) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?;
+    let mut dev = authenticate(settings, None)?.dev;
     let teams = dev.list_teams()?;
     println!("Teams:");
     for team in &teams {
@@ -58,7 +58,7 @@ pub fn device_list(
     team: Option<String>,
     udid: Option<String>,
 ) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?;
+    let mut dev = authenticate(settings, None)?.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let registered = dev.list_devices(&team.team_id)?;
     let connected = connected_devices();
@@ -99,7 +99,7 @@ pub fn device_delete(
     team: Option<String>,
     device_id: &str,
 ) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?;
+    let mut dev = authenticate(settings, None)?.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let devices = dev.list_devices(&team.team_id)?;
     let matches: Vec<_> = devices
@@ -114,7 +114,7 @@ pub fn device_delete(
 }
 
 pub fn cert_list(settings: &Settings, team: Option<String>) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?;
+    let mut dev = authenticate(settings, None)?.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let certs = dev.list_development_certs(&team.team_id)?;
     println!("You have {} certificates registered.", certs.len());
@@ -135,7 +135,7 @@ pub fn cert_list(settings: &Settings, team: Option<String>) -> Result<ExitCode> 
 }
 
 pub fn cert_revoke(settings: &Settings, team: Option<String>, serial: &str) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?;
+    let mut dev = authenticate(settings, None)?.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let certs = dev.list_development_certs(&team.team_id)?;
     let matches: Vec<_> = certs.iter().filter(|c| c.serial_number == serial).collect();
@@ -151,7 +151,7 @@ pub fn cert_revoke(settings: &Settings, team: Option<String>, serial: &str) -> R
 }
 
 pub fn app_id_list(settings: &Settings, team: Option<String>) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?;
+    let mut dev = authenticate(settings, None)?.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let list = dev.list_app_ids(&team.team_id)?;
     match (list.available_quantity, list.max_quantity) {
@@ -176,7 +176,7 @@ pub fn app_id_delete(
     team: Option<String>,
     identifier: &str,
 ) -> Result<ExitCode> {
-    let mut dev = authenticate(settings, None)?;
+    let mut dev = authenticate(settings, None)?.dev;
     let team = select_team(&mut dev, team.as_deref())?;
     let list = dev.list_app_ids(&team.team_id)?;
     let matches: Vec<_> = list

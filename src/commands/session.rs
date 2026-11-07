@@ -10,10 +10,17 @@ use crate::config::{ProcessEnv, Settings};
 use crate::pipeline::Phase;
 use crate::{Result, credentials, output};
 
+/// An authenticated Developer client plus the Apple ID that logged in (used
+/// for the per-account signing key path, SPEC Section 4.2).
+pub struct Authenticated {
+    pub dev: Developer<Https>,
+    pub apple_id: String,
+}
+
 /// Logs in and returns a Developer client sharing the login's transport and
 /// anisette provider. `phase` tags errors for `install`; diagnostics pass
 /// `None`.
-pub fn authenticate(settings: &Settings, phase: Option<Phase>) -> Result<Developer<Https>> {
+pub fn authenticate(settings: &Settings, phase: Option<Phase>) -> Result<Authenticated> {
     let tag = |e: crate::Error| match phase {
         Some(p) => e.with_phase(p),
         None => e,
@@ -26,7 +33,10 @@ pub fn authenticate(settings: &Settings, phase: Option<Phase>) -> Result<Develop
     let session = gsa
         .login(&creds, credentials::prompt_two_factor_code)
         .map_err(tag)?;
-    Ok(Developer::from_authenticated(session, gsa))
+    Ok(Authenticated {
+        dev: Developer::from_authenticated(session, gsa),
+        apple_id: creds.apple_id.clone(),
+    })
 }
 
 /// Selects the team per SPEC Section 9.3 and reports the choice.
