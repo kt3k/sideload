@@ -19,8 +19,14 @@ device has not been run yet, and local ADI on macOS/Windows is not done. See
 
 ## Installation
 
-On Linux and macOS, the install script detects your platform, downloads the matching binary from
-the latest release, verifies its checksum, and installs it to `~/.local/bin`:
+With [Homebrew](https://brew.sh) (macOS, or Linux):
+
+```sh
+brew install kt3k/tap/sideload
+```
+
+Otherwise, on Linux and macOS, the install script detects your platform, downloads the matching
+binary from the latest release, verifies its checksum, and installs it to `~/.local/bin`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kt3k/sideload/main/install.sh | sh
