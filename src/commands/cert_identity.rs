@@ -82,33 +82,49 @@ fn load_or_generate_key(path: &Path) -> Result<(RsaPrivateKey, bool)> {
     }
 }
 
+/// Writes the key owner-only (SPEC Section 14.3): the file is created with
+/// mode 0600 from the start (never briefly readable by others), written to a
+/// temporary name, then renamed over any previous key.
 fn write_key(path: &Path, key: &RsaPrivateKey) -> Result<()> {
+    use std::io::Write;
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)
             .map_err(|e| io_fail(format!("cannot create `{}`: {e}", dir.display())))?;
-        set_dir_private(dir);
+        set_dir_private(dir)
+            .map_err(|e| io_fail(format!("cannot restrict `{}`: {e}", dir.display())))?;
     }
-    fs::write(path, key.to_pkcs8_pem())
-        .map_err(|e| io_fail(format!("cannot write `{}`: {e}", path.display())))?;
-    set_file_private(path);
+    let tmp = path.with_extension("partial");
+    let _ = fs::remove_file(&tmp);
+    let result = (|| -> std::io::Result<()> {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp)?;
+        file.write_all(key.to_pkcs8_pem().as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&tmp, path)
+    })();
+    if let Err(e) = result {
+        let _ = fs::remove_file(&tmp);
+        return Err(io_fail(format!("cannot write `{}`: {e}", path.display())));
+    }
     Ok(())
 }
 
 #[cfg(unix)]
-fn set_dir_private(dir: &Path) {
+fn set_dir_private(dir: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
 }
 #[cfg(not(unix))]
-fn set_dir_private(_dir: &Path) {}
-
-#[cfg(unix)]
-fn set_file_private(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+fn set_dir_private(_dir: &Path) -> std::io::Result<()> {
+    Ok(())
 }
-#[cfg(not(unix))]
-fn set_file_private(_path: &Path) {}
 
 /// Decides, without making changes, what SPEC 7.3 will do (for the plan).
 pub fn plan_action(
@@ -294,6 +310,9 @@ mod tests {
         let key =
             RsaPrivateKey::from_pem(include_str!("../crypto/testdata/openssl_key.pem")).unwrap();
         write_key(&path, &key).unwrap();
+        // Replacing an existing key works and keeps it private.
+        write_key(&path, &key).unwrap();
+        assert!(!path.with_extension("partial").exists());
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600

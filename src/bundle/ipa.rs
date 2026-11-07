@@ -1,8 +1,12 @@
 //! IPA extraction and repacking (SPEC Sections 11.1, 11.3, 14.3).
 //!
 //! Extraction rejects member names with `..`, absolute paths or drive
-//! prefixes, and symbolic links whose target leaves the extraction root.
+//! prefixes, symbolic links whose target (resolved through the archive's
+//! other links) leaves the extraction root, and entries placed under a
+//! symbolic link, so nothing is ever written outside the root.
 
+use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{Read, Seek};
 use std::path::{Component, Path, PathBuf};
@@ -21,20 +25,53 @@ fn io_err(path: &Path, e: std::io::Error) -> Error {
     Error::new(ErrorCode::IpaInvalid, format!("`{}`: {e}", path.display()))
 }
 
-/// True if `target`, resolved relative to the directory of `link` (both
-/// relative to the extraction root), stays inside the root.
-fn symlink_stays_inside(link: &Path, target: &str) -> bool {
+/// Upper bound on symlinks followed while resolving one target.
+const MAX_LINK_HOPS: u32 = 40;
+
+/// True if the symlink at `link` (relative to the extraction root) with
+/// `target` resolves inside the root once every symlink in `links` exists.
+///
+/// A lexical check is not enough: the filesystem resolves `..` after a
+/// component that is itself a link against the link's target, so
+/// `l -> .`, `x -> ..` and `m -> l/x/..` escape although `l/x/..` looks
+/// harmless. Each component is therefore resolved through `links`.
+fn symlink_stays_inside(link: &Path, target: &str, links: &HashMap<PathBuf, String>) -> bool {
+    let mut stack: Vec<OsString> = link
+        .parent()
+        .map(|p| p.iter().map(OsStr::to_os_string).collect())
+        .unwrap_or_default();
+    let mut hops = 0;
+    resolve_inside(&mut stack, target, links, &mut hops)
+}
+
+fn resolve_inside(
+    stack: &mut Vec<OsString>,
+    target: &str,
+    links: &HashMap<PathBuf, String>,
+    hops: &mut u32,
+) -> bool {
     if target.is_empty() || target.starts_with('/') || target.contains('\\') {
         return false;
     }
-    let mut depth: i64 = link.components().count() as i64 - 1;
     for part in Path::new(target).components() {
         match part {
-            Component::Normal(_) => depth += 1,
+            Component::Normal(name) => {
+                stack.push(name.to_os_string());
+                let here: PathBuf = stack.iter().collect();
+                if let Some(next) = links.get(&here) {
+                    *hops += 1;
+                    if *hops > MAX_LINK_HOPS {
+                        return false;
+                    }
+                    stack.pop();
+                    if !resolve_inside(stack, next, links, hops) {
+                        return false;
+                    }
+                }
+            }
             Component::CurDir => {}
             Component::ParentDir => {
-                depth -= 1;
-                if depth < 0 {
+                if stack.pop().is_none() {
                     return false;
                 }
             }
@@ -58,12 +95,39 @@ pub fn extract_from<R: Read + Seek>(reader: R, dest: &Path) -> Result<PathBuf> {
         return Err(invalid("the IPA expands to more than 16 GiB"));
     }
 
+    // Collect every symlink first: containment depends on all of them.
+    let mut links: HashMap<PathBuf, String> = HashMap::new();
+    for index in 0..zip.entries().len() {
+        let entry = zip.entries()[index].clone();
+        if !entry.is_symlink() {
+            continue;
+        }
+        let rel = entry
+            .safe_path()
+            .ok_or_else(|| invalid(format!("unsafe path in IPA: `{}`", entry.name)))?;
+        let data = zip.read(index).map_err(|e| invalid(e.to_string()))?;
+        let target = String::from_utf8(data)
+            .map_err(|_| invalid(format!("non-UTF-8 symlink `{}`", entry.name)))?;
+        if links.insert(rel, target).is_some() {
+            return Err(invalid(format!("duplicate symlink `{}`", entry.name)));
+        }
+    }
+
     let mut apps = std::collections::BTreeSet::new();
     for index in 0..zip.entries().len() {
         let entry = zip.entries()[index].clone();
         let rel = entry
             .safe_path()
             .ok_or_else(|| invalid(format!("unsafe path in IPA: `{}`", entry.name)))?;
+        // Writing below a link (or over one) would follow it.
+        if rel.ancestors().skip(1).any(|a| links.contains_key(a))
+            || (!entry.is_symlink() && links.contains_key(&rel))
+        {
+            return Err(invalid(format!(
+                "`{}` is placed under or over a symbolic link",
+                entry.name
+            )));
+        }
         let mut comps = rel.components();
         if let (Some(Component::Normal(first)), Some(Component::Normal(second))) =
             (comps.next(), comps.next())
@@ -81,19 +145,17 @@ pub fn extract_from<R: Read + Seek>(reader: R, dest: &Path) -> Result<PathBuf> {
         if let Some(parent) = out.parent() {
             fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
         }
-        let data = zip.read(index).map_err(|e| invalid(e.to_string()))?;
-        if entry.is_symlink() {
-            let target = String::from_utf8(data)
-                .map_err(|_| invalid(format!("non-UTF-8 symlink `{}`", entry.name)))?;
-            if !symlink_stays_inside(&rel, &target) {
+        if let Some(target) = links.get(&rel).filter(|_| entry.is_symlink()) {
+            if !symlink_stays_inside(&rel, target, &links) {
                 return Err(invalid(format!(
                     "symlink `{}` points outside the IPA: `{target}`",
                     entry.name
                 )));
             }
-            make_symlink(&target, &out)?;
+            make_symlink(target, &out)?;
             continue;
         }
+        let data = zip.read(index).map_err(|e| invalid(e.to_string()))?;
         fs::write(&out, &data).map_err(|e| io_err(&out, e))?;
         #[cfg(unix)]
         if let Some(mode) = entry.unix_mode() {
@@ -223,13 +285,60 @@ pub(crate) mod tests {
 
     #[test]
     fn symlink_containment() {
+        let none = HashMap::new();
         let link = Path::new("Payload/A.app/Frameworks/F.framework/Current");
-        assert!(symlink_stays_inside(link, "Versions/A"));
-        assert!(symlink_stays_inside(link, "../../Info.plist"));
-        assert!(symlink_stays_inside(link, "../../../../x"));
-        assert!(!symlink_stays_inside(link, "../../../../../x"));
-        assert!(!symlink_stays_inside(link, "/etc/passwd"));
-        assert!(!symlink_stays_inside(link, ""));
+        assert!(symlink_stays_inside(link, "Versions/A", &none));
+        assert!(symlink_stays_inside(link, "../../Info.plist", &none));
+        assert!(symlink_stays_inside(link, "../../../../x", &none));
+        assert!(!symlink_stays_inside(link, "../../../../../x", &none));
+        assert!(!symlink_stays_inside(link, "/etc/passwd", &none));
+        assert!(!symlink_stays_inside(link, "", &none));
+    }
+
+    fn links(pairs: &[(&str, &str)]) -> HashMap<PathBuf, String> {
+        pairs
+            .iter()
+            .map(|(l, t)| (PathBuf::from(l), t.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn symlink_containment_follows_other_links() {
+        // `l -> ..` makes `l/..` the root's parent, not `Payload`.
+        let set = links(&[("Payload/l", ".."), ("Payload/m", "l/..")]);
+        assert!(symlink_stays_inside(Path::new("Payload/l"), "..", &set));
+        assert!(!symlink_stays_inside(Path::new("Payload/m"), "l/..", &set));
+        // Through two links.
+        let set = links(&[
+            ("Payload/l", "."),
+            ("Payload/x", ".."),
+            ("Payload/m", "l/x/.."),
+        ]);
+        assert!(!symlink_stays_inside(
+            Path::new("Payload/m"),
+            "l/x/..",
+            &set
+        ));
+        // Cycles terminate.
+        let set = links(&[("Payload/a", "b/c"), ("Payload/b", "a/d")]);
+        assert!(!symlink_stays_inside(Path::new("Payload/a"), "b/c", &set));
+        // Framework layout stays valid.
+        let fw = "Payload/A.app/Frameworks/F.framework";
+        let set = links(&[
+            (&format!("{fw}/Versions/Current"), "A"),
+            (&format!("{fw}/F"), "Versions/Current/F"),
+            (&format!("{fw}/Resources"), "Versions/Current/Resources"),
+        ]);
+        assert!(symlink_stays_inside(
+            Path::new(&format!("{fw}/F")),
+            "Versions/Current/F",
+            &set
+        ));
+        assert!(symlink_stays_inside(
+            Path::new(&format!("{fw}/Versions/Current")),
+            "A",
+            &set
+        ));
     }
 
     #[test]
@@ -287,6 +396,42 @@ pub(crate) mod tests {
                 .unwrap_err()
                 .message
                 .contains("points outside")
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_chained_symlink_escape_and_writes_under_links() {
+        let dir = temp_dir("symlink-chain");
+        let inner = dir.join("work");
+        fs::create_dir_all(&inner).unwrap();
+        let mut w = ZipWriter::new(Vec::new());
+        w.add_file("Payload/A.app/A", b"x", 0o755, false).unwrap();
+        w.add_symlink("Payload/l", "..").unwrap();
+        w.add_symlink("Payload/m", "l/..").unwrap();
+        w.add_file("Payload/m/escaped", b"x", 0o644, false).unwrap();
+        let data = w.finish().unwrap();
+        assert_eq!(
+            extract_from(Cursor::new(data), &inner).unwrap_err().code,
+            ErrorCode::IpaInvalid
+        );
+        assert!(!dir.join("escaped").exists());
+
+        // A file under an otherwise harmless link is rejected too.
+        let inner2 = dir.join("work2");
+        fs::create_dir_all(&inner2).unwrap();
+        let mut w = ZipWriter::new(Vec::new());
+        w.add_file("Payload/A.app/A", b"x", 0o755, false).unwrap();
+        w.add_symlink("Payload/A.app/link", "Sub").unwrap();
+        w.add_file("Payload/A.app/link/f", b"x", 0o644, false)
+            .unwrap();
+        let data = w.finish().unwrap();
+        assert!(
+            extract_from(Cursor::new(data), &inner2)
+                .unwrap_err()
+                .message
+                .contains("under or over a symbolic link")
         );
         fs::remove_dir_all(dir).unwrap();
     }
