@@ -3,7 +3,10 @@
 `sign::sign_bundle` signs an extracted, prepared `bundle::AppBundle` in place. It takes:
 
 - A `SigningIdentity`: RSA private key, team identifier, and DER certificates (signer first,
-  then intermediates). The certificate's RSA public key must match the private key.
+  then intermediates). The certificate's RSA public key must match the private key. Build it
+  with `SigningIdentity::with_apple_chain`, which appends the Apple WWDR G3 intermediate (when it
+  issued the certificate) and the Apple Root CA from `sign/certs/`, so that iOS can build the
+  chain.
 - A `BTreeMap<String, Vec<u8>>` from each app/extension's final bundle identifier to its own
   complete Apple-issued `.mobileprovision` bytes.
 - A positive thread count. Independent embedded Mach-O files run in a bounded worker pool;
@@ -28,6 +31,12 @@ CodeResources, and entitlements. It generates:
 - A designated requirement binding identifier, Apple generic anchor, and certificate leaf OU.
 - Detached CMS SignedData with SHA-256/RSA and Apple v1/v2 hash-agility attributes.
 - Updated LC_CODE_SIGNATURE and __LINKEDIT file/VM sizes, hashing the finalized load commands.
+
+Code is detected by magic: thin Mach-O magic always counts as code, but a fat magic
+(`0xCAFEBABE` is shared with Java class files) only counts when the architecture table is small and
+points at thin Mach-O slices inside the file; anything else is sealed as a resource. Nested bundles
+must live in a location listed in `bundle::NESTED_BUNDLE_DIRS` (`PlugIns/`, `Extensions/`,
+`Watch/`, `AppClips/`) so that they get their own App ID and profile.
 
 Supported binaries are little-endian 32/64-bit Mach-O, including universal binaries with
 32/64-bit fat headers in either byte order. Each architecture is signed independently.

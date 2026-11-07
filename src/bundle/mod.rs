@@ -10,6 +10,16 @@ use crate::{Error, ErrorCode, Result};
 
 pub const SIDESTORE_BUNDLE_ID: &str = "com.SideStore.SideStore";
 
+/// Where nested bundles that need their own App ID and profile live
+/// (SPEC Section 4.1.10). The signer signs every `.app`/`.appex` it finds,
+/// so every such location must be listed here.
+pub const NESTED_BUNDLE_DIRS: [(&str, &str); 4] = [
+    ("PlugIns", "appex"),
+    ("Extensions", "appex"),
+    ("Watch", "app"),
+    ("AppClips", "app"),
+];
+
 fn bundle_invalid(msg: impl Into<String>) -> Error {
     Error::new(ErrorCode::BundleInvalid, msg)
 }
@@ -25,8 +35,8 @@ pub struct AppBundle {
 }
 
 impl AppBundle {
-    /// Loads a bundle and, recursively, its `PlugIns/*.appex` and
-    /// `Watch/*.app` (SPEC Section 4.1.10).
+    /// Loads a bundle and, recursively, the nested bundles listed in
+    /// `NESTED_BUNDLE_DIRS` (SPEC Section 4.1.10).
     pub fn load(path: &Path) -> Result<AppBundle> {
         let info_path = path.join("Info.plist");
         let raw = fs::read(&info_path)
@@ -49,7 +59,7 @@ impl AppBundle {
             extensions: Vec::new(),
         };
         bundle.bundle_identifier()?;
-        for (dir, ext) in [("PlugIns", "appex"), ("Watch", "app")] {
+        for (dir, ext) in NESTED_BUNDLE_DIRS {
             let sub = path.join(dir);
             if !sub.is_dir() {
                 continue;
@@ -127,9 +137,9 @@ impl AppBundle {
             .map_err(|e| bundle_invalid(format!("cannot write `{}`: {e}", path.display())))
     }
 
-    /// `--strip-extensions`: removes `PlugIns/` and `Watch/`.
+    /// `--strip-extensions`: removes every directory in `NESTED_BUNDLE_DIRS`.
     pub fn strip_extensions(&mut self) -> Result<()> {
-        for dir in ["PlugIns", "Watch"] {
+        for (dir, _) in NESTED_BUNDLE_DIRS {
             let p = self.path.join(dir);
             if p.exists() {
                 fs::remove_dir_all(&p)
@@ -283,6 +293,46 @@ mod tests {
                 "com.example.app"
             ]
         );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn finds_extensionkit_and_app_clips_and_strips_them() {
+        let dir = temp_dir("bundle-more");
+        let path = dir.join("Payload/A.app");
+        write_bundle(&path, "com.example.a", "A", false);
+        write_bundle(
+            &path.join("Extensions/E.appex"),
+            "com.example.a.ext",
+            "E",
+            false,
+        );
+        write_bundle(
+            &path.join("AppClips/C.app"),
+            "com.example.a.clip",
+            "C",
+            false,
+        );
+        // Not a bundle location: ignored.
+        write_bundle(
+            &path.join("Resources/X.appex"),
+            "com.example.a.x",
+            "X",
+            false,
+        );
+        let mut app = AppBundle::load(&path).unwrap();
+        let ids: Vec<_> = app
+            .all_bundles_inner_first()
+            .iter()
+            .map(|b| b.bundle_identifier().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            ids,
+            ["com.example.a.ext", "com.example.a.clip", "com.example.a"]
+        );
+        app.strip_extensions().unwrap();
+        assert!(!path.join("Extensions").exists() && !path.join("AppClips").exists());
+        assert!(path.join("Resources").exists());
         fs::remove_dir_all(dir).unwrap();
     }
 

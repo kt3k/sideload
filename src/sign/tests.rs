@@ -558,3 +558,72 @@ fn symlink_seals_and_output_safety() {
     );
     assert_eq!(fs::read(root.join("asset")).unwrap(), b"original");
 }
+
+#[test]
+fn fat_magic_alone_is_not_code() {
+    // Java class file: CAFEBABE, minor 0, major 52.
+    let mut class = vec![0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x34];
+    class.extend([0u8; 64]);
+    assert!(macho::is_fat_magic(&class));
+    assert!(!macho::looks_like_fat_macho(&class));
+    // A small table whose slice is not a thin Mach-O is also rejected.
+    let mut fake = vec![0; 64];
+    fake[..4].copy_from_slice(&0xcafebabeu32.to_be_bytes());
+    fake[4..8].copy_from_slice(&1u32.to_be_bytes());
+    fake[16..20].copy_from_slice(&32u32.to_be_bytes()); // offset
+    fake[20..24].copy_from_slice(&16u32.to_be_bytes()); // size
+    assert!(!macho::looks_like_fat_macho(&fake));
+
+    // A real universal binary is still recognized.
+    let a = thin(true);
+    let mut fat = vec![0; 4096];
+    fat[..4].copy_from_slice(&0xcafebabeu32.to_be_bytes());
+    fat[4..8].copy_from_slice(&1u32.to_be_bytes());
+    for (o, v) in [
+        (0, 0x100000cu32),
+        (4, 0),
+        (8, 4096),
+        (12, a.len() as u32),
+        (16, 12),
+    ] {
+        fat[8 + o..12 + o].copy_from_slice(&v.to_be_bytes());
+    }
+    fat.extend(&a);
+    assert!(macho::looks_like_fat_macho(&fat));
+
+    // In a bundle, the class file is sealed as a resource and signing succeeds.
+    let temp = Temp::new();
+    let root = temp.0.join("Java.app");
+    app(&root, "com.test");
+    fs::write(root.join("Helper.class"), &class).unwrap();
+    fs::write(root.join("Universal"), &fat).unwrap();
+    let identity = identity();
+    let profiles = BTreeMap::from([("com.test".into(), profile("com.test", &identity))]);
+    sign_bundle(&AppBundle::load(&root).unwrap(), &identity, &profiles, 1).unwrap();
+    assert_eq!(fs::read(root.join("Helper.class")).unwrap(), class);
+    let r =
+        plist::from_bytes(&fs::read(root.join("_CodeSignature/CodeResources")).unwrap()).unwrap();
+    let files = r.get("files2").unwrap();
+    assert!(files.get("Helper.class").unwrap().get("hash2").is_some());
+    assert!(files.get("Universal").unwrap().get("cdhash").is_some());
+}
+
+#[test]
+fn identity_with_apple_chain() {
+    let base = identity();
+    let leaf = base.certificates[0].clone();
+    let id =
+        SigningIdentity::with_apple_chain(leaf.clone(), base.private_key.clone(), "TEAM".into());
+    assert_eq!(id.certificates.first(), Some(&leaf));
+    assert_eq!(
+        id.certificates.last().map(Vec::as_slice),
+        Some(super::apple_certs::ROOT_CA)
+    );
+    // The Apple certificates end up in the CMS certificate set.
+    let (signed, _) = sign_macho(&thin(true), "com.test", &id, None, None, None).unwrap();
+    let cms = slot(signature(&signed), 0x10000);
+    let root_in_cms = cms
+        .windows(super::apple_certs::ROOT_CA.len())
+        .any(|w| w == super::apple_certs::ROOT_CA);
+    assert!(root_in_cms);
+}

@@ -4,6 +4,7 @@
 //! each app/extension identifier. Frameworks and dylibs are signed before their
 //! containing bundle; profiles are embedded only in apps/extensions. No Apple
 //! account or device calls are made here. `install` orchestration is separate.
+pub mod apple_certs;
 pub mod cms;
 pub mod code_directory;
 pub mod code_resources;
@@ -39,6 +40,22 @@ pub struct SigningIdentity {
     pub certificates: Vec<Vec<u8>>,
     pub private_key: RsaPrivateKey,
     pub team_id: String,
+}
+impl SigningIdentity {
+    /// Builds an identity whose certificate set is the Apple-issued
+    /// `certificate` followed by its WWDR intermediate (when known) and the
+    /// Apple Root CA, so that iOS can build the full chain.
+    pub fn with_apple_chain(
+        certificate: Vec<u8>,
+        private_key: RsaPrivateKey,
+        team_id: String,
+    ) -> Self {
+        SigningIdentity {
+            certificates: apple_certs::chain_for(certificate),
+            private_key,
+            team_id,
+        }
+    }
 }
 impl std::fmt::Debug for SigningIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -363,8 +380,14 @@ fn collect_code(
             use std::io::Read;
             let mut magic = [0; 4];
             let mut f = fs::File::open(&path).map_err(|e| error(&path, e))?;
-            if f.read(&mut magic).map_err(|e| error(&path, e))? == 4 && macho::is_macho(&magic) {
-                binaries.push(path);
+            if f.read(&mut magic).map_err(|e| error(&path, e))? == 4 {
+                // A fat magic is only code if the architecture table checks out
+                // (Java class files share 0xCAFEBABE); otherwise it is a resource.
+                let is_code = macho::is_thin_macho(&magic)
+                    || (macho::is_fat_magic(&magic) && macho::looks_like_fat_macho(&read(&path)?));
+                if is_code {
+                    binaries.push(path);
+                }
             }
         }
     }

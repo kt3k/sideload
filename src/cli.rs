@@ -373,7 +373,7 @@ Options:
       --team <TEAM_ID>     Team to use (default: first team)
   -o, --output <PATH>      Write the signed IPA instead of installing it
       --dry-run            Print the plan only; change nothing
-      --strip-extensions   Remove app extensions and Watch apps (saves App IDs)
+      --strip-extensions   Remove extensions, Watch apps and App Clips (saves App IDs)
       --bundle-id <ID>     Use this main bundle identifier as-is
       --name <NAME>        Rewrite CFBundleDisplayName
       --new-cert           Revoke all Sideloader certificates and create a new one.

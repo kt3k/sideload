@@ -89,21 +89,60 @@ impl Prepared {
         Ok(self.code)
     }
 }
-pub fn is_macho(data: &[u8]) -> bool {
+/// Thin 32/64-bit little-endian Mach-O magic.
+pub fn is_thin_macho(data: &[u8]) -> bool {
+    matches!(data.get(..4), Some([0xce | 0xcf, 0xfa, 0xed, 0xfe]))
+}
+
+/// A fat header magic. `0xCAFEBABE` is also the Java class file magic, so a
+/// match alone does not identify a Mach-O; see `looks_like_fat_macho`.
+pub fn is_fat_magic(data: &[u8]) -> bool {
     matches!(
         data.get(..4),
-        Some(
-            [0xce, 0xfa, 0xed, 0xfe]
-                | [0xcf, 0xfa, 0xed, 0xfe]
-                | [0xfe, 0xed, 0xfa, 0xce]
-                | [0xfe, 0xed, 0xfa, 0xcf]
-                | [0xca, 0xfe, 0xba, 0xbe]
-                | [0xbe, 0xba, 0xfe, 0xca]
-                | [0xca, 0xfe, 0xba, 0xbf]
-                | [0xbf, 0xba, 0xfe, 0xca]
-        )
+        Some([0xca, 0xfe, 0xba, 0xbe | 0xbf] | [0xbe | 0xbf, 0xba, 0xfe, 0xca])
     )
 }
+
+/// Real universal binaries have a small architecture table whose entries
+/// point at thin Mach-O slices inside the file.
+pub fn looks_like_fat_macho(data: &[u8]) -> bool {
+    let (be, wide) = match data.get(..4) {
+        Some([0xca, 0xfe, 0xba, 0xbe]) => (true, false),
+        Some([0xbe, 0xba, 0xfe, 0xca]) => (false, false),
+        Some([0xca, 0xfe, 0xba, 0xbf]) => (true, true),
+        Some([0xbf, 0xba, 0xfe, 0xca]) => (false, true),
+        _ => return false,
+    };
+    let Ok(n) = read32(data, 4, be) else {
+        return false;
+    };
+    let stride = if wide { 32 } else { 20 };
+    if n == 0 || n > 16 {
+        return false;
+    }
+    (0..n as usize).all(|i| {
+        let p = 8 + i * stride;
+        let off = if wide {
+            read64(data, p + 8, be)
+        } else {
+            read32(data, p + 8, be).map(u64::from)
+        };
+        let size = if wide {
+            read64(data, p + 16, be)
+        } else {
+            read32(data, p + 12, be).map(u64::from)
+        };
+        match (off, size) {
+            (Ok(off), Ok(size)) => {
+                off.checked_add(size)
+                    .is_some_and(|end| end <= data.len() as u64)
+                    && usize::try_from(off).is_ok_and(|o| is_thin_macho(&data[o..]))
+            }
+            _ => false,
+        }
+    })
+}
+
 pub fn prepare(data: &[u8]) -> SignResult<Prepared> {
     let wide = match data.get(..4) {
         Some([0xcf, 0xfa, 0xed, 0xfe]) => true,

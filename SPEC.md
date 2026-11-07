@@ -211,7 +211,9 @@ A `.app` extracted into the working directory.
 - `bundle_identifier` (string): `CFBundleIdentifier` from `Info.plist`.
 - `bundle_name` (string)
 - `display_name` (string or null): `CFBundleDisplayName`.
-- `extensions` (list of App Bundle): `PlugIns/*.appex` and `Watch/*.app`.
+- `extensions` (list of App Bundle): `PlugIns/*.appex`, `Extensions/*.appex` (ExtensionKit),
+  `Watch/*.app`, and `AppClips/*.app`, recursively. Every nested `.app`/`.appex` that is signed
+  MUST be one of these, so that it gets its own App ID and profile.
 
 #### 4.1.11 Install Plan
 
@@ -309,7 +311,7 @@ Global options come before the subcommand.
 - `--team <team_id>`: Team to use.
 - `-o`, `--output <path>`: Write the signed IPA instead of installing it.
 - `--dry-run`: Print the plan only. Changes nothing on the Apple side or on the device.
-- `--strip-extensions`: Remove extensions and Watch apps before processing.
+- `--strip-extensions`: Remove extensions, Watch apps, and App Clips before processing.
 - `--bundle-id <id>`: Set the main bundle identifier (Section 4.2).
 - `--name <name>`: Rewrite `CFBundleDisplayName`.
 - `--new-cert`: Do not reuse the existing certificate; recreate it (Section 7.3).
@@ -689,7 +691,7 @@ with `device_not_paired` and tell the user to choose "Trust This Computer" on th
 ### 11.1 Bundle Processing
 
 - The IPA MUST contain exactly one `Payload/<name>.app`. Otherwise fail with `ipa_invalid`.
-- `--strip-extensions`: Delete `PlugIns/` and `Watch/`.
+- `--strip-extensions`: Delete `PlugIns/`, `Extensions/`, `Watch/`, and `AppClips/`.
 - `--name`: Set `CFBundleDisplayName` of the main bundle.
 - Rewrite bundle identifiers following Section 4.2. A nested Watch app's
   `WKCompanionAppBundleIdentifier`, when present, MUST be set to the new `Main Bundle ID`.
