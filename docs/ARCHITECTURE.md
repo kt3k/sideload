@@ -20,7 +20,7 @@ organized and what it depends on.
 | | `apple::{gsa, developer}` | GrandSlam login, developerservices2 |
 | | `device::{usbmuxd, lockdown, afc, installation_proxy, misagent}` | Device communication (SPEC 10) |
 | Artifact | `bundle` | IPA extraction, bundle rewriting (SPEC 11.1) |
-| | `sign` | Mach-O code signing (SPEC 11.2) |
+| | `sign` | Mach-O code signing (SPEC 11.2, implemented; see SIGNING.md) |
 | Building blocks | `formats::{plist, zip, der, json, base64, date}` | In-tree format code (implemented) |
 | | `crypto::{cbc, srp, rsa_keygen}` | Protocol crypto on vetted primitives |
 

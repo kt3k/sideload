@@ -7,7 +7,10 @@ A reduced, corrected Rust port of the [Sideloader](https://github.com/Dadoum/Sid
 
 **Status:** early. Argument parsing, configuration resolution, argument validation, and the
 format layer (plist XML/binary, ZIP, DER, JSON), crypto (SRP, AES, RSA), the HTTPS client, the
-`--sidestore` download, and IPA/bundle processing work. Everything else is not implemented yet.
+`--sidestore` download, IPA/bundle processing, and the in-process code signer work. Apple
+login/developer services, device communication, and the install pipeline are not implemented yet;
+`install --output` is not wired up. See [docs/SIGNING.md](docs/SIGNING.md) for the signing API,
+validation, and current limitations.
 
 - [SPEC.md](SPEC.md): behavior specification
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): module map, dependency policy, reference sources
