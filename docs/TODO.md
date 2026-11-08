@@ -9,7 +9,7 @@ Checked items have implementation and mock coverage; live validation is noted ex
 
 - [x] Apple account login (`src/apple/gsa.rs`, SPEC 9.2): SRP, trusted-device 2FA, Xcode token; live validation pending
 - [x] Developer Services client (`src/apple/developer.rs`, SPEC 9.4): all iOS operations and CSR; live validation pending
-- [x] Local Anisette: Linux x86_64/aarch64 and Windows x64 Android ADI; macOS Intel/Apple Silicon native AOSKit/AuthKit. Linux initialization tested; macOS/Windows runtime, ARM hardware, large-page shifting and live OTP validation pending.
+- [x] Local Anisette: Linux x86_64/aarch64 and Windows x64 Android ADI; macOS Intel/Apple Silicon native AOSKit/AuthKit. Live provisioning + OTP rotation pass on Linux x86_64/aarch64, Windows x64 and macOS arm64 runners (Live Anisette workflow); macOS Intel, 16 KiB-page kernels and use in a real Apple ID login pending.
 - [ ] Anisette resync on GSA `hsc 434` / `X-Apple-I-MD-DATA` (needs an AnisetteProvider::resync hook; live-only)
 
 ## In progress here
@@ -23,6 +23,5 @@ installation_proxy, misagent), credential input (no-echo password, 2FA prompt), 
 
 ## Known gaps against SPEC
 
-- SPEC 9.1: Android ADI download progress shows only 0% and 100%.
 - SPEC 16: an end-to-end check of the signed `--output` IPA is still untested (needs a
   signed fixture or a real certificate).

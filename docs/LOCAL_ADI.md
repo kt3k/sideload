@@ -158,7 +158,7 @@ has a compatibility layer for each OS:
 | Linux aarch64 | `arm64-v8a` | nothing | 16 KiB page kernels need the load shift (Section 2) |
 | Windows x86_64 | `x86_64` | System V trampoline for every call (`androidInvoke`), `sysv_abi` hooks, CRT shims, Linux `stat` conversion | source comment: "Works on a real Windows machine, but not Wine". Windows on ARM is not handled |
 | macOS x86_64 | `x86_64` | `errno` hook, Linux `stat` conversion | |
-| macOS arm64 | `arm64-v8a` | same as macOS x86_64 | built in CI; whether it runs reliably (Darwin arm64 ABI and memory-protection differences) is unverified |
+| macOS arm64 | `arm64-v8a` | same as macOS x86_64 | built in CI; whether it runs reliably (Darwin arm64 ABI and memory-protection differences) is unverified upstream. This repository uses AOSKit on macOS instead (Section 10) |
 
 Being built in CI does not prove that a target works at runtime. Only the source code was read
 for this document; nothing was run.
@@ -183,15 +183,15 @@ for this document; nothing was run.
 
 `anisette::provider` now selects `local_adi::LocalAdi` when no remote server is configured.
 The backend is native AOSKit/AuthKit on macOS Intel/Apple Silicon, and Android ADI on
-Linux x86_64/aarch64 and Windows x64. Linux x86_64 was checked with the official current APK.
-The macOS Intel/ARM64 and Windows x64 GNU/MSVC code paths are cross-compiled, including tests,
-but their runtime behavior has not been verified on real machines. Linux ARM64 also awaits
-hardware validation. Unsupported CPU/OS combinations return an actionable error.
+Linux x86_64/aarch64 and Windows x64. Live provisioning and OTP generation pass on GitHub's
+Linux x86_64, Linux aarch64, Windows x64 and macOS arm64 runners (see "Live validation"
+below). macOS Intel is cross-compiled only (no Intel runner). Unsupported CPU/OS combinations
+return an actionable error.
 
 On first use of an Android backend, `download::ensure` obtains Apple's HTTPS APK, extracts only the architecture's
 two libraries, validates ELF metadata, and installs each with a private temporary file and
-rename under `config/lib`. Download start/completion show 0% and 100%; intermediate byte-level
-progress is not implemented. The proprietary libraries are not redistributed in this repository.
+rename under `config/lib`. Progress is printed at 0%, every 10% of the APK download (or every
+10 MiB when the server sends no length), and 100% once the libraries are installed. The proprietary libraries are not redistributed in this repository.
 Existing library files are reused. Treat this directory as executable code, not untrusted input.
 
 The loader checks ELF64 program headers, file-backed dynamic addresses, symbol/relocation
@@ -225,17 +225,26 @@ The deterministic ELF fixture executes a tiny function and checks its relative r
 malformed headers and unsupported relocations are rejected. Mock provisioning tests verify
 stable identity, one-time provisioning, fresh OTPs, and cleanup after a failed exchange.
 
-**Still unverified:** live Apple provisioning and OTP generation with the native libraries.
-After explicit user authorization, a live check was attempted on 2026-11-07. Native library
-initialization passed, but the first lookup request failed with HTTP 503. A separate curl
-request without device identifiers also returned 503 from Envoy with `upstream connect error`
-and `remote connection failure`. Provisioning and OTP generation were not reached, so this
-does not establish live interoperability or an Apple application-level rejection.
+### Live validation
 
-The opt-in reproduction is `SIDELOAD_ADI_LIBRARY_DIR=/path/to/extracted/x86_64 cargo test
---test local_adi_live -- --ignored --nocapture`. It uses temporary state, sends no Apple ID or
-password, and prints no generated header values. macOS/Windows runtime tests, ARM hardware tests, large-page load shifting, and ADI
-resynchronization remain follow-up work; full end-to-end conformance is not yet established.
+`tests/local_adi_live.rs` initializes the backend, provisions with Apple, requests two OTPs
+back to back, waits 35 seconds (past the ~30 s OTP window) and checks that the OTP changed.
+It uses temporary state, sends no Apple ID or password, and prints no generated header values.
+Run it locally with `SIDELOAD_ADI_LIBRARY_DIR=/path/to/extracted/<abi> cargo test --test
+local_adi_live -- --ignored --nocapture` (macOS needs no library directory), or on GitHub with
+the manual **Live Anisette** workflow (`.github/workflows/live-anisette.yml`), which extracts
+the libraries from Apple's APK itself.
+
+Results on 2026-11-08 (GitHub-hosted runners): **passed** on Linux x86_64, Linux aarch64
+(`ubuntu-22.04-arm`), Windows x64 and macOS arm64 (AOSKit, not signed into iCloud).
+Back-to-back OTPs are identical within one window, so only the later request must differ.
+
+An earlier attempt from a sandboxed environment (2026-11-07) failed with HTTP 503 from the
+sandbox's proxy before reaching Apple; that was a network restriction, not a rejection.
+
+Not covered: logging in to an Apple ID with the generated headers (needs a real account),
+macOS Intel, 16 KiB-page ARM kernels (large-page load shifting), a Mac signed into iCloud,
+and ADI resynchronization.
 
 
 ## 10. macOS and Windows implementations

@@ -274,9 +274,19 @@ impl Client {
 
     /// Sends `req`, following redirects for GET requests.
     pub fn send(&self, req: &Request) -> NetResult<Response> {
+        self.send_with_progress(req, &mut |_, _| {})
+    }
+
+    /// Like `send`, reporting body download progress as
+    /// `(bytes received, total bytes if known)`.
+    pub fn send_with_progress(
+        &self,
+        req: &Request,
+        progress: &mut dyn FnMut(u64, Option<u64>),
+    ) -> NetResult<Response> {
         let mut url = req.url.clone();
         for _ in 0..=MAX_REDIRECTS {
-            let resp = self.send_once(req, &url)?;
+            let resp = self.send_once(req, &url, progress)?;
             let redirect =
                 matches!(resp.status, 301 | 302 | 303 | 307 | 308) && req.method == "GET";
             match (redirect, resp.header("location")) {
@@ -332,10 +342,15 @@ impl Client {
 
     /// Send without redirects (for Apple provisioning endpoints and trust boundaries).
     pub fn send_without_redirects(&self, req: &Request) -> NetResult<Response> {
-        self.send_once(req, &req.url)
+        self.send_once(req, &req.url, &mut |_, _| {})
     }
 
-    fn send_once(&self, req: &Request, url_str: &str) -> NetResult<Response> {
+    fn send_once(
+        &self,
+        req: &Request,
+        url_str: &str,
+        progress: &mut dyn FnMut(u64, Option<u64>),
+    ) -> NetResult<Response> {
         let url = Url::parse(url_str)?;
         let (mut tls, target) = self.open_http(&url)?;
 
@@ -384,7 +399,8 @@ impl Client {
         {
             Vec::new()
         } else {
-            read_body(&mut reader, &headers, req.max_body).map_err(|e| e.context(&url.host))?
+            read_body_with_progress(&mut reader, &headers, req.max_body, progress)
+                .map_err(|e| e.context(&url.host))?
         };
         Ok(Response {
             status,
@@ -559,7 +575,39 @@ pub(crate) fn read_head(r: &mut impl BufRead) -> NetResult<(u16, Vec<(String, St
     }
 }
 
+#[cfg(test)]
 fn read_body(r: &mut impl BufRead, headers: &[(String, String)], max: usize) -> NetResult<Vec<u8>> {
+    read_body_with_progress(r, headers, max, &mut |_, _| {})
+}
+
+/// Bytes read between progress reports.
+const PROGRESS_STEP: usize = 64 * 1024;
+
+/// Reads `len` bytes into `body` in steps, reporting progress.
+fn read_counted(
+    r: &mut impl BufRead,
+    body: &mut Vec<u8>,
+    len: usize,
+    total: Option<u64>,
+    progress: &mut dyn FnMut(u64, Option<u64>),
+) -> std::io::Result<()> {
+    let end = body.len() + len;
+    while body.len() < end {
+        let start = body.len();
+        let step = PROGRESS_STEP.min(end - start);
+        body.resize(start + step, 0);
+        r.read_exact(&mut body[start..])?;
+        progress(body.len() as u64, total);
+    }
+    Ok(())
+}
+
+fn read_body_with_progress(
+    r: &mut impl BufRead,
+    headers: &[(String, String)],
+    max: usize,
+    progress: &mut dyn FnMut(u64, Option<u64>),
+) -> NetResult<Vec<u8>> {
     let get = |name: &str| {
         headers
             .iter()
@@ -586,9 +634,7 @@ fn read_body(r: &mut impl BufRead, headers: &[(String, String)], max: usize) -> 
             if body.len().saturating_add(size) > max {
                 return Err(too_large());
             }
-            let start = body.len();
-            body.resize(start + size, 0);
-            r.read_exact(&mut body[start..]).map_err(io)?;
+            read_counted(r, &mut body, size, None, progress).map_err(io)?;
             let mut crlf = [0u8; 2];
             r.read_exact(&mut crlf).map_err(io)?;
             if &crlf != b"\r\n" {
@@ -603,14 +649,23 @@ fn read_body(r: &mut impl BufRead, headers: &[(String, String)], max: usize) -> 
         if len > max {
             return Err(too_large());
         }
-        let mut body = vec![0u8; len];
-        r.read_exact(&mut body).map_err(io)?;
+        let mut body = Vec::with_capacity(len);
+        read_counted(r, &mut body, len, Some(len as u64), progress).map_err(io)?;
         return Ok(body);
     }
     let mut body = Vec::new();
-    let n = r.take(max as u64 + 1).read_to_end(&mut body).map_err(io)?;
-    if n > max {
-        return Err(too_large());
+    let mut limited = r.take(max as u64 + 1);
+    let mut buf = vec![0u8; PROGRESS_STEP];
+    loop {
+        let n = limited.read(&mut buf).map_err(io)?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&buf[..n]);
+        if body.len() > max {
+            return Err(too_large());
+        }
+        progress(body.len() as u64, None);
     }
     Ok(body)
 }
@@ -733,6 +788,7 @@ mod tests {
 #[cfg(test)]
 mod proxy_tests {
     use super::*;
+    use std::io::Cursor;
     use std::net::TcpListener;
     #[test]
     fn plain_proxy_uses_absolute_form_without_connect() {
@@ -791,5 +847,40 @@ mod proxy_tests {
         assert_eq!(u.authority(), "[::1]:6969");
         assert_eq!(u.join("/x").unwrap(), "http://[::1]:6969/x");
         assert!(Client::new("agent\r\nInjected: x", &[]).is_err());
+    }
+
+    #[test]
+    fn body_progress_is_reported() {
+        let body = vec![7u8; PROGRESS_STEP * 2 + 10];
+        let mut seen = Vec::new();
+        let headers = vec![("Content-Length".to_owned(), body.len().to_string())];
+        let read = read_body_with_progress(
+            &mut Cursor::new(body.clone()),
+            &headers,
+            1 << 20,
+            &mut |n, total| seen.push((n, total)),
+        )
+        .unwrap();
+        assert_eq!(read, body);
+        let total = Some(body.len() as u64);
+        assert_eq!(
+            seen,
+            [
+                (PROGRESS_STEP as u64, total),
+                (2 * PROGRESS_STEP as u64, total),
+                (body.len() as u64, total)
+            ]
+        );
+
+        // Unknown length: progress without a total, last report = size.
+        let mut last = None;
+        let read =
+            read_body_with_progress(&mut Cursor::new(body.clone()), &[], 1 << 20, &mut |n, t| {
+                assert_eq!(t, None);
+                last = Some(n);
+            })
+            .unwrap();
+        assert_eq!(read.len(), body.len());
+        assert_eq!(last, Some(body.len() as u64));
     }
 }
