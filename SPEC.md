@@ -59,7 +59,8 @@ Important boundary:
 
 - Upstream commands not needed for installation, such as `sign` (standalone signing),
   `trollsign`, and `tool` (SideStore pairing file).
-- Persisting credentials or login sessions (including keyring integration).
+- Persisting credentials (the password is never stored). Saving the login session is limited to
+  the OS keyring as described in Section 9.6.
 - Fully unattended login including 2FA. The user always enters the 2FA code.
 - A GUI.
 - Installation for platforms other than iOS (tvOS, standalone watchOS apps, macOS).
@@ -286,6 +287,7 @@ The executable name is Implementation-defined.
 <cli> app-id list                         List App IDs and remaining quota
 <cli> app-id delete <identifier>          Delete an App ID
 
+<cli> logout                              Remove the saved login session (Section 9.6)
 <cli> version                             Print the version
 ```
 
@@ -367,6 +369,8 @@ When both a CLI option and an environment variable are present, the CLI option M
   - Apple ID. When set, the tool does not prompt for the Apple ID.
 - `SIDELOADER_APPLE_PASSWORD`
   - Password. When set, the tool does not prompt for the password.
+- `SIDELOADER_NO_KEYCHAIN`
+  - When non-empty, login sessions are neither saved nor reused (Section 9.6).
 - `HTTPS_PROXY` / `https_proxy`, `NO_PROXY` / `no_proxy`
   - Standard proxy settings. They SHOULD be honored for every HTTPS connection (an `http://`
     proxy reached with `CONNECT`).
@@ -623,7 +627,7 @@ Prints the version string. Performs neither login nor device communication.
    - Reading MAY happen even when standard input is not a terminal (piped input is allowed).
    - If the input is `resend`, resend the code and wait for input again.
    - On a wrong code, ask again. When standard input reaches EOF, fail with `two_factor_failed`.
-6. Do not persist credentials or the session.
+6. Do not persist credentials. The session MAY be saved only as described in Section 9.6.
 
 ### 9.3 Team Selection
 
@@ -655,6 +659,26 @@ The Developer Service Client MUST provide at least the following operations, all
   `apple_api_error` when none applies. The message MUST include the result code and description
   returned by Apple.
 - Unparseable responses → `apple_api_error` (with `--debug`, log the response content).
+
+### 9.6 Saved Sessions
+
+Where the OS provides a secure per-user store, the tool MAY save the Developer Services session so
+that later commands skip steps 2 to 5 of Section 9.2. The reference implementation does this on
+macOS (login Keychain, service `sideload`, account = the lowercased Apple ID) and saves nothing
+on other hosts.
+
+- What is saved: the account's `adsid`, the Xcode app token and its expiry. The password and 2FA
+  codes MUST NOT be saved. Sessions without an expiry MUST NOT be saved.
+- Order: resolve `apple_id` (Section 9.2 step 1) first. If a saved session for it exists and
+  stays valid for at least 10 more minutes, verify it with `list_teams()`; if that succeeds, use
+  it without asking for the password. Otherwise delete the saved session and log in normally.
+- After a successful normal login, save the new session (replacing any old one) and tell the
+  user how to remove it.
+- `SIDELOADER_NO_KEYCHAIN` (non-empty) disables both saving and reusing.
+- `logout` resolves `apple_id` and deletes its saved session without logging in. It succeeds
+  whether or not a session was saved.
+- The saved token is a secret (Section 14.2): it MUST NOT be written anywhere except the OS
+  store and MUST NOT be logged.
 
 ## 10. Device Integration Contract
 
@@ -1103,7 +1127,7 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 
 - Machine-readable output for listing commands (for example `--json`)
 - Device connection over Wi-Fi
-- TODO: Secure persistence of login sessions including 2FA (using the OS keyring)
+- Saved sessions in the OS keyring on hosts other than macOS (Section 9.6)
 
 ### 17.3 Operational Validation Before Production (RECOMMENDED)
 
@@ -1126,8 +1150,9 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 
 ### A.2 Behavior Changes and Bug Fixes
 
-1. Login is always performed. Upstream always failed without `-i` (the keyring code was
-   unimplemented and its condition was inverted). `-i` is removed.
+1. Login is always performed, except that on macOS a saved session is reused (Section 9.6).
+   Upstream always failed without `-i` (the keyring code was unimplemented and its condition was
+   inverted). `-i` is removed; `logout` is added.
 2. Credentials can also be passed through environment variables (`SIDELOADER_APPLE_ID`,
    `SIDELOADER_APPLE_PASSWORD`).
 3. With multiple devices connected and no `--udid`, the tool exits with an error. Upstream printed

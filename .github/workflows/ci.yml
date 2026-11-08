@@ -49,3 +49,6 @@ jobs:
         run: cargo test --all --no-run
       - name: Local Anisette compatibility tests
         run: 'cargo test anisette::local_adi::'
+      - name: Keychain session round trip
+        if: runner.os == 'macOS'
+        run: 'cargo test session_store:: -- --ignored'

@@ -56,6 +56,7 @@ pub enum Command {
         team: Option<String>,
         identifier: String,
     },
+    Logout,
     Version,
     Help(&'static str),
 }
@@ -216,6 +217,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Invocation> {
             Sub::Name(s) => return Err(unknown_sub("app-id", &s)),
         },
         "version" => no_more_args(&mut p, help::TOP)?.unwrap_or(Command::Version),
+        "logout" => no_more_args(&mut p, help::TOP)?.unwrap_or(Command::Logout),
         other => {
             return Err(invalid(format!(
                 "unknown command `{other}` (see `sideload --help`)"
@@ -355,6 +357,7 @@ Commands:
   app-id list                List App IDs and remaining quota
   app-id delete <id>         Delete an App ID
 
+  logout                     Remove the saved login session (macOS)
   version                    Print the version
 
 Global options:
@@ -371,6 +374,8 @@ Environment:
   SIDELOADER_APPLE_ID         Apple ID (skips the prompt)
   SIDELOADER_APPLE_PASSWORD   Password (skips the prompt). It may be readable by
                               other processes of the same user.
+  SIDELOADER_NO_KEYCHAIN      Non-empty: do not save or reuse the login session
+                              (on macOS it is kept in the login Keychain)
 ";
 
     pub const INSTALL: &str = "\
@@ -557,6 +562,7 @@ mod tests {
             }
         );
         assert_eq!(cmd(&["version"]), Command::Version);
+        assert_eq!(cmd(&["logout"]), Command::Logout);
     }
 
     #[test]

@@ -8,6 +8,7 @@ pub mod output;
 // Configuration layer
 pub mod config;
 pub mod credentials;
+pub mod session_store;
 
 // Coordination layer
 pub mod commands;

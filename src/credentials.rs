@@ -38,42 +38,80 @@ pub fn resolve(env: &dyn Env) -> Result<Credentials> {
     )
 }
 
+/// Only the Apple ID (from the environment or a prompt), lowercased. Used
+/// to look up a saved session before asking for the password.
+pub fn resolve_apple_id(env: &dyn Env) -> Result<String> {
+    apple_id_with(env, std::io::stdin().is_terminal(), &mut prompt_line)
+}
+
+/// The password for an already known `apple_id`.
+pub fn resolve_for(env: &dyn Env, apple_id: &str) -> Result<Credentials> {
+    password_with(
+        env,
+        apple_id,
+        std::io::stdin().is_terminal(),
+        &mut prompt_password,
+    )
+}
+
+fn from_env(env: &dyn Env, key: &str) -> Option<String> {
+    env.get_non_empty(key)
+        .map(|v| v.to_string_lossy().into_owned())
+}
+
+fn unavailable() -> Error {
+    Error::new(
+        ErrorCode::CredentialsUnavailable,
+        format!("standard input is not a terminal; set {ENV_APPLE_ID} and {ENV_APPLE_PASSWORD}"),
+    )
+}
+
+fn apple_id_with(
+    env: &dyn Env,
+    interactive: bool,
+    ask_line: &mut dyn FnMut(&str) -> Result<String>,
+) -> Result<String> {
+    let apple_id = match from_env(env, ENV_APPLE_ID) {
+        Some(v) => v,
+        None if interactive => ask_line("Apple ID: ")?,
+        None => return Err(unavailable()),
+    };
+    // Upstream lowercases the Apple ID before SRP and the key path (SPEC 4.1.2).
+    Ok(apple_id.to_lowercase())
+}
+
+fn password_with(
+    env: &dyn Env,
+    apple_id: &str,
+    interactive: bool,
+    ask_password: &mut dyn FnMut(&str) -> Result<String>,
+) -> Result<Credentials> {
+    let password = match from_env(env, ENV_APPLE_PASSWORD) {
+        Some(v) => v,
+        None if interactive => ask_password("Password: ")?,
+        None => return Err(unavailable()),
+    };
+    Ok(Credentials {
+        apple_id: apple_id.to_owned(),
+        password,
+    })
+}
+
 /// `resolve` with the terminal check and prompts injected (for tests).
+/// Without a terminal, fails before prompting if either value is missing.
 fn resolve_with(
     env: &dyn Env,
     interactive: bool,
     ask_line: &mut dyn FnMut(&str) -> Result<String>,
     ask_password: &mut dyn FnMut(&str) -> Result<String>,
 ) -> Result<Credentials> {
-    let from_env = |key| {
-        env.get_non_empty(key)
-            .map(|v| v.to_string_lossy().into_owned())
-    };
-    let apple_id = from_env(ENV_APPLE_ID);
-    let password = from_env(ENV_APPLE_PASSWORD);
-
-    if (apple_id.is_none() || password.is_none()) && !interactive {
-        return Err(Error::new(
-            ErrorCode::CredentialsUnavailable,
-            format!(
-                "standard input is not a terminal; set {ENV_APPLE_ID} and {ENV_APPLE_PASSWORD}"
-            ),
-        ));
+    if !interactive
+        && (from_env(env, ENV_APPLE_ID).is_none() || from_env(env, ENV_APPLE_PASSWORD).is_none())
+    {
+        return Err(unavailable());
     }
-
-    let apple_id = match apple_id {
-        Some(v) => v,
-        None => ask_line("Apple ID: ")?,
-    };
-    let password = match password {
-        Some(v) => v,
-        None => ask_password("Password: ")?,
-    };
-    // Upstream lowercases the Apple ID before SRP and the key path (SPEC 4.1.2).
-    Ok(Credentials {
-        apple_id: apple_id.to_lowercase(),
-        password,
-    })
+    let apple_id = apple_id_with(env, interactive, ask_line)?;
+    password_with(env, &apple_id, interactive, ask_password)
 }
 
 fn prompt_line(prompt: &str) -> Result<String> {

@@ -87,6 +87,11 @@ When installation fails, the diagnostic commands show the account state: `team l
 Credentials can be passed with `SIDELOADER_APPLE_ID` and `SIDELOADER_APPLE_PASSWORD` instead of
 the prompts (the password may then be readable by other processes of the same user).
 
+On macOS, the login session (not the password) is saved in the login Keychain after you log in,
+so later commands skip the password and 2FA until Apple's token expires. `sideload logout`
+removes it, and `SIDELOADER_NO_KEYCHAIN=1` disables saving. After upgrading sideload, macOS may
+ask whether the new binary may use the saved item ("Always Allow" keeps it working).
+
 ### Anisette
 
 Apple login needs anisette data. Local generation uses Apple's Android ADI libraries on Linux

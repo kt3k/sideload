@@ -29,6 +29,7 @@ pub fn dispatch(command: Command, settings: &Settings) -> Result<ExitCode> {
         } => d::cert_revoke(settings, team, &serial_number),
         Command::AppIdList { team } => d::app_id_list(settings, team),
         Command::AppIdDelete { team, identifier } => d::app_id_delete(settings, team, &identifier),
+        Command::Logout => session::logout(),
         Command::Version => version::run(),
         Command::Help(text) => {
             print!("{text}");
