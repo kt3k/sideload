@@ -369,13 +369,13 @@ Global options:
                              data containing device identifiers.
 
 Environment:
-  SIDELOADER_CONFIG_DIR       Configuration directory
-  SIDELOADER_ANISETTE_SERVER  Default for --anisette-server
-  SIDELOADER_APPLE_ID         Apple ID (skips the prompt)
-  SIDELOADER_APPLE_PASSWORD   Password (skips the prompt). It may be readable by
-                              other processes of the same user.
-  SIDELOADER_NO_KEYCHAIN      Non-empty: do not save or reuse the login session
-                              (on macOS it is kept in the login Keychain)
+  SIDELOAD_CONFIG_DIR       Configuration directory
+  SIDELOAD_ANISETTE_SERVER  Default for --anisette-server
+  SIDELOAD_APPLE_ID         Apple ID (skips the prompt)
+  SIDELOAD_APPLE_PASSWORD   Password (skips the prompt). It may be readable by
+                            other processes of the same user.
+  SIDELOAD_NO_KEYCHAIN      Non-empty: do not save or reuse the login session
+                            (on macOS it is kept in the login Keychain)
 ";
 
     pub const INSTALL: &str = "\

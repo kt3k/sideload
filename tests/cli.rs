@@ -14,10 +14,10 @@ fn run(name: &str, args: &[&str]) -> Output {
     let dir = config_dir(name);
     let out = Command::new(env!("CARGO_BIN_EXE_sideload"))
         .args(args)
-        .env("SIDELOADER_CONFIG_DIR", &dir)
-        .env_remove("SIDELOADER_ANISETTE_SERVER")
-        .env_remove("SIDELOADER_APPLE_ID")
-        .env_remove("SIDELOADER_APPLE_PASSWORD")
+        .env("SIDELOAD_CONFIG_DIR", &dir)
+        .env_remove("SIDELOAD_ANISETTE_SERVER")
+        .env_remove("SIDELOAD_APPLE_ID")
+        .env_remove("SIDELOAD_APPLE_PASSWORD")
         .output()
         .unwrap();
     let _ = std::fs::remove_dir_all(&dir);
@@ -108,7 +108,7 @@ fn keep_temp_keeps_the_working_directory_on_failure() {
         .arg("-o")
         .arg(root.join("out.ipa"))
         .arg("--keep-temp")
-        .env("SIDELOADER_CONFIG_DIR", root.join("config"))
+        .env("SIDELOAD_CONFIG_DIR", root.join("config"))
         .env("TMPDIR", &tmp)
         .env("TMP", &tmp)
         .env("TEMP", &tmp)

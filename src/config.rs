@@ -9,10 +9,10 @@ use std::path::PathBuf;
 
 use crate::{Error, ErrorCode, Result};
 
-pub const ENV_CONFIG_DIR: &str = "SIDELOADER_CONFIG_DIR";
-pub const ENV_ANISETTE_SERVER: &str = "SIDELOADER_ANISETTE_SERVER";
-pub const ENV_APPLE_ID: &str = "SIDELOADER_APPLE_ID";
-pub const ENV_APPLE_PASSWORD: &str = "SIDELOADER_APPLE_PASSWORD";
+pub const ENV_CONFIG_DIR: &str = "SIDELOAD_CONFIG_DIR";
+pub const ENV_ANISETTE_SERVER: &str = "SIDELOAD_ANISETTE_SERVER";
+pub const ENV_APPLE_ID: &str = "SIDELOAD_APPLE_ID";
+pub const ENV_APPLE_PASSWORD: &str = "SIDELOAD_APPLE_PASSWORD";
 
 /// Directory name under the per-OS config root. Fixed for upstream
 /// compatibility regardless of the executable name (SPEC Section 5.1).

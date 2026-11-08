@@ -266,9 +266,9 @@ The executable name is Implementation-defined.
 
 - The implementation in this repository uses `sideload`.
 - Examples in this document write it as `<cli>`.
-- The environment variable prefix (`SIDELOADER_`), the configuration directory name
-  (`Sideloader`), and the certificate machine name (`Sideloader`) MUST stay fixed regardless of the
-  executable name, for compatibility with upstream.
+- The environment variable prefix is `SIDELOAD_` regardless of the executable name.
+- The configuration directory name (`Sideloader`) and the certificate machine name (`Sideloader`)
+  MUST stay fixed regardless of the executable name, for compatibility with upstream.
 
 ### 5.2 Command Tree
 
@@ -361,15 +361,15 @@ When both a CLI option and an environment variable are present, the CLI option M
 
 ### 6.2 Environment Variables
 
-- `SIDELOADER_CONFIG_DIR`
+- `SIDELOAD_CONFIG_DIR`
   - Overrides the configuration directory.
-- `SIDELOADER_ANISETTE_SERVER`
+- `SIDELOAD_ANISETTE_SERVER`
   - Default for `--anisette-server`.
-- `SIDELOADER_APPLE_ID`
+- `SIDELOAD_APPLE_ID`
   - Apple ID. When set, the tool does not prompt for the Apple ID.
-- `SIDELOADER_APPLE_PASSWORD`
+- `SIDELOAD_APPLE_PASSWORD`
   - Password. When set, the tool does not prompt for the password.
-- `SIDELOADER_NO_KEYCHAIN`
+- `SIDELOAD_NO_KEYCHAIN`
   - When non-empty, login sessions are neither saved nor reused (Section 9.6).
 - `HTTPS_PROXY` / `https_proxy`, `NO_PROXY` / `no_proxy`
   - Standard proxy settings. They SHOULD be honored for every HTTPS connection (an `http://`
@@ -381,7 +381,7 @@ An environment variable set to the empty string MUST be treated as unset.
 
 ### 6.3 Configuration Directory Resolution
 
-1. If `SIDELOADER_CONFIG_DIR` is set, use its value.
+1. If `SIDELOAD_CONFIG_DIR` is set, use its value.
 2. Otherwise use the per-OS default:
    - Linux and others: `${XDG_CONFIG_HOME:-~/.config}/Sideloader`
    - macOS: `~/Library/Preferences/Sideloader`
@@ -395,10 +395,10 @@ This section is intentionally redundant with the rest of the document.
 
 - `debug`: boolean, default `false`, `-d` / `--debug`
 - `thread_count`: positive integer, default number of logical CPUs, `--thread-count`
-- `anisette_server`: URL or null, default null, `--anisette-server` > `SIDELOADER_ANISETTE_SERVER`
-- `config_dir`: path, `SIDELOADER_CONFIG_DIR` > per-OS default
-- `apple_id`: string, `SIDELOADER_APPLE_ID` > interactive input
-- `password`: string, `SIDELOADER_APPLE_PASSWORD` > interactive input (no echo)
+- `anisette_server`: URL or null, default null, `--anisette-server` > `SIDELOAD_ANISETTE_SERVER`
+- `config_dir`: path, `SIDELOAD_CONFIG_DIR` > per-OS default
+- `apple_id`: string, `SIDELOAD_APPLE_ID` > interactive input
+- `password`: string, `SIDELOAD_APPLE_PASSWORD` > interactive input (no echo)
 - `team_id`: string or null, default null (first team), `--team`
 - `udid`: string or null, default null (automatic selection), `--udid`
 
@@ -615,8 +615,8 @@ Prints the version string. Performs neither login nor device communication.
 
 ### 9.2 Login Flow
 
-1. Resolve `apple_id`: `SIDELOADER_APPLE_ID` → interactive input.
-2. Resolve `password`: `SIDELOADER_APPLE_PASSWORD` → interactive input.
+1. Resolve `apple_id`: `SIDELOAD_APPLE_ID` → interactive input.
+2. Resolve `password`: `SIDELOAD_APPLE_PASSWORD` → interactive input.
    - Interactive input MUST NOT be echoed. On platforms where echo cannot be suppressed, a warning
      MUST be printed before input.
 3. If interactive input is needed but standard input is not a terminal, fail immediately with
@@ -674,7 +674,7 @@ on other hosts.
   it without asking for the password. Otherwise delete the saved session and log in normally.
 - After a successful normal login, save the new session (replacing any old one) and tell the
   user how to remove it.
-- `SIDELOADER_NO_KEYCHAIN` (non-empty) disables both saving and reusing.
+- `SIDELOAD_NO_KEYCHAIN` (non-empty) disables both saving and reusing.
 - `logout` resolves `apple_id` and deletes its saved session without logging in. It succeeds
   whether or not a session was saved.
 - The saved token is a secret (Section 14.2): it MUST NOT be written anywhere except the OS
@@ -872,7 +872,7 @@ the quota is insufficient.
 
 - Passwords, 2FA codes, authentication tokens, and private keys MUST NOT be logged, including with
   `--debug`.
-- The value of `SIDELOADER_APPLE_PASSWORD` MUST NOT be printed. The fact that it is set MAY be
+- The value of `SIDELOAD_APPLE_PASSWORD` MUST NOT be printed. The fact that it is set MAY be
   logged (with `--debug`).
 - Passing the password through an environment variable may expose it to other processes of the
   same user. The help text is RECOMMENDED to say so.
@@ -1049,12 +1049,12 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 
 - CLI options take precedence over environment variables.
 - Environment variables set to the empty string are treated as unset.
-- `SIDELOADER_CONFIG_DIR` overrides the configuration directory.
+- `SIDELOAD_CONFIG_DIR` overrides the configuration directory.
 - On Linux, `XDG_CONFIG_HOME` is honored.
 
 ### 16.3 Credentials and Login
 
-- When `SIDELOADER_APPLE_ID` and `SIDELOADER_APPLE_PASSWORD` are set, no input is requested.
+- When `SIDELOAD_APPLE_ID` and `SIDELOAD_APPLE_PASSWORD` are set, no input is requested.
 - When only one of them is set, only the other is requested.
 - When interactive input is needed and standard input is not a terminal, the tool fails with
   `credentials_unavailable` without waiting.
@@ -1109,8 +1109,8 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 
 - The command tree and global options in Section 5.2
 - Configuration resolution in Section 6 (CLI > environment > interactive input > default)
-- Passing credentials through environment variables (`SIDELOADER_APPLE_ID`,
-  `SIDELOADER_APPLE_PASSWORD`)
+- Passing credentials through environment variables (`SIDELOAD_APPLE_ID`,
+  `SIDELOAD_APPLE_PASSWORD`)
 - Password input without echo, and `resend` for 2FA
 - Support for both local ADI and remote Anisette
 - All phases in Section 7.2, with error reports that name the phase
@@ -1153,8 +1153,8 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 1. Login is always performed, except that on macOS a saved session is reused (Section 9.6).
    Upstream always failed without `-i` (the keyring code was unimplemented and its condition was
    inverted). `-i` is removed; `logout` is added.
-2. Credentials can also be passed through environment variables (`SIDELOADER_APPLE_ID`,
-   `SIDELOADER_APPLE_PASSWORD`).
+2. Credentials can also be passed through environment variables (`SIDELOAD_APPLE_ID`,
+   `SIDELOAD_APPLE_PASSWORD`).
 3. With multiple devices connected and no `--udid`, the tool exits with an error. Upstream printed
    an error but kept going with a null UDID.
 4. Each extension is signed with the profile of its own App ID. Upstream downloaded the main
@@ -1164,7 +1164,7 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 6. Arguments and device selection are validated before credentials are requested.
 7. `install` gains `--team`, `--output`, `--dry-run`, `--strip-extensions`, `--bundle-id`,
    `--name`, `--new-cert`, and `--keep-temp`.
-8. The global option `--anisette-server` (environment variable `SIDELOADER_ANISETTE_SERVER`) is
+8. The global option `--anisette-server` (environment variable `SIDELOAD_ANISETTE_SERVER`) is
    added.
 9. `--singlethread` is removed in favor of `--thread-count 1`. The default changes from `uint.max`
    to the number of logical CPUs.

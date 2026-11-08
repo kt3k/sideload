@@ -13,7 +13,7 @@ use crate::config::Env;
 use crate::formats::plist::{self, Dictionary, Value};
 
 /// Set (non-empty) to disable saving and reusing sessions.
-pub const ENV_NO_KEYCHAIN: &str = "SIDELOADER_NO_KEYCHAIN";
+pub const ENV_NO_KEYCHAIN: &str = "SIDELOAD_NO_KEYCHAIN";
 
 /// Keychain service name of saved sessions.
 pub const SERVICE: &str = "sideload";

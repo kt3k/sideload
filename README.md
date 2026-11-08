@@ -84,12 +84,12 @@ accounts), `--bundle-id`, `--name`, `--new-cert`, `--keep-temp`. See `sideload i
 When installation fails, the diagnostic commands show the account state: `team list`,
 `device list` / `device delete`, `cert list` / `cert revoke`, `app-id list` / `app-id delete`.
 
-Credentials can be passed with `SIDELOADER_APPLE_ID` and `SIDELOADER_APPLE_PASSWORD` instead of
+Credentials can be passed with `SIDELOAD_APPLE_ID` and `SIDELOAD_APPLE_PASSWORD` instead of
 the prompts (the password may then be readable by other processes of the same user).
 
 On macOS, the login session (not the password) is saved in the login Keychain after you log in,
 so later commands skip the password and 2FA until Apple's token expires. `sideload logout`
-removes it, and `SIDELOADER_NO_KEYCHAIN=1` disables saving. After upgrading sideload, macOS may
+removes it, and `SIDELOAD_NO_KEYCHAIN=1` disables saving. After upgrading sideload, macOS may
 ask whether the new binary may use the saved item ("Always Allow" keeps it working).
 
 ### Anisette
@@ -101,7 +101,7 @@ backend is unavailable or fails, use a remote anisette-v3 server:
 
 ```sh
 sideload --anisette-server https://ani.example.com install MyApp.ipa
-# or: export SIDELOADER_ANISETTE_SERVER=https://ani.example.com
+# or: export SIDELOAD_ANISETTE_SERVER=https://ani.example.com
 ```
 
 A remote server is a third party that generates anisette data with device identifiers; use one
