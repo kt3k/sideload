@@ -92,3 +92,38 @@ fn diagnostics_do_not_carry_a_phase() {
     let err = stderr(&out);
     assert!(err.contains("error[invalid_arguments]:"), "{err}");
 }
+
+#[test]
+fn keep_temp_keeps_the_working_directory_on_failure() {
+    // A file that passes argument validation but is not a zip fails in
+    // PreparingBundle, after the working directory exists (SPEC 12, 16.5).
+    let root = config_dir("keep-temp");
+    let tmp = root.join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    let ipa = root.join("broken.ipa");
+    std::fs::write(&ipa, b"not a zip").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_sideload"))
+        .arg("install")
+        .arg(&ipa)
+        .arg("-o")
+        .arg(root.join("out.ipa"))
+        .arg("--keep-temp")
+        .env("SIDELOADER_CONFIG_DIR", root.join("config"))
+        .env("TMPDIR", &tmp)
+        .env("TMP", &tmp)
+        .env("TEMP", &tmp)
+        // No usbmuxd: Output mode continues without a device.
+        .env("USBMUXD_SOCKET_ADDRESS", "127.0.0.1:9")
+        .output()
+        .unwrap();
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(err.contains("(PreparingBundle)"), "{err}");
+    let kept = err
+        .lines()
+        .find_map(|l| l.strip_prefix("Working directory kept at "))
+        .unwrap_or_else(|| panic!("no kept path in: {err}"));
+    assert!(std::path::Path::new(kept).is_dir(), "{kept}");
+    assert!(!err.contains("Logging in"), "failed before login");
+    std::fs::remove_dir_all(&root).unwrap();
+}

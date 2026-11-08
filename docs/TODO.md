@@ -24,5 +24,5 @@ installation_proxy, misagent), credential input (no-echo password, 2FA prompt), 
 ## Known gaps against SPEC
 
 - SPEC 9.1: Android ADI download progress shows only 0% and 100%.
-- SPEC 16: `--keep-temp` on failure, re-running without duplicate resources, and an
-  end-to-end check of the signed `--output` IPA are still untested.
+- SPEC 16: an end-to-end check of the signed `--output` IPA is still untested (needs a
+  signed fixture or a real certificate).

@@ -1023,4 +1023,57 @@ mod tests {
             Ok(Some(("U9".into(), None)))
         );
     }
+
+    #[test]
+    fn rerun_reuses_existing_resources() {
+        // SPEC 7.6: a second run against an account that already has the
+        // App ID (with App Groups on) and the App Group creates nothing.
+        let dir = TempDir::new("rerun");
+        let mut app = sample_app(&dir.0);
+        let script = base_script(dict([(
+            "appIds",
+            Value::Array(vec![Value::Dictionary(dict([
+                ("appIdId", Value::from("ID-com.example.a.TEAM")),
+                ("identifier", Value::from("com.example.a.TEAM")),
+                ("name", Value::from("A")),
+                (
+                    "features",
+                    Value::Dictionary(dict([(developer::APP_GROUP_FEATURE, Value::from(true))])),
+                ),
+            ]))]),
+        )]));
+        script.borrow_mut().replies.insert(
+            "listApplicationGroups",
+            dict([(
+                "applicationGroupList",
+                Value::Array(vec![Value::Dictionary(dict([
+                    ("applicationGroup", Value::from("SERVER-GROUP-ID")),
+                    ("identifier", Value::from("group.com.example.a.TEAM")),
+                ]))]),
+            )]),
+        );
+        script.borrow_mut().replies.insert(
+            "downloadTeamProvisioningProfile",
+            dict([(
+                "provisioningProfile",
+                Value::Dictionary(dict([
+                    ("provisioningProfileId", Value::from("P")),
+                    ("appIdId", Value::from("ID-com.example.a.TEAM")),
+                    ("encodedProfile", Value::Data(b"profile".to_vec())),
+                ])),
+            )]),
+        );
+        provision_app_ids(
+            &mut developer(&script),
+            "TEAM",
+            &mut app,
+            "com.example.a.TEAM",
+            "com.example.a",
+        )
+        .unwrap();
+        let actions: Vec<String> = script.borrow().calls.iter().map(|c| c.0.clone()).collect();
+        for creating in ["addAppId", "updateAppId", "addApplicationGroup"] {
+            assert!(!actions.iter().any(|a| a == creating), "{actions:?}");
+        }
+    }
 }
