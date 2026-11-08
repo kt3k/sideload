@@ -242,8 +242,11 @@ Back-to-back OTPs are identical within one window, so only the later request mus
 An earlier attempt from a sandboxed environment (2026-11-07) failed with HTTP 503 from the
 sandbox's proxy before reaching Apple; that was a network restriction, not a rejection.
 
-Not covered: logging in to an Apple ID with the generated headers (needs a real account),
-macOS Intel, 16 KiB-page ARM kernels (large-page load shifting), a Mac signed into iCloud,
+A real Apple ID login (GSA SRP, 2FA, Xcode token, `team list`) succeeded on a Mac with 0.1.4
+(2026-11-08), using the default local backend. Logging in with headers from the Android ADI
+backends (Linux, Windows) has not been tried yet.
+
+Not covered: Apple ID login with the Android ADI backends, macOS Intel, 16 KiB-page ARM kernels (large-page load shifting), a Mac signed into iCloud,
 and ADI resynchronization.
 
 

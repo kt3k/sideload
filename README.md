@@ -9,8 +9,8 @@ A reduced, corrected Rust port of the [Sideloader](https://github.com/Dadoum/Sid
 diagnostic commands, code signing, the Apple login / Developer Services clients, remote anisette
 v3, local Anisette on Linux/macOS/Windows, and device communication are implemented. Deterministic
 paths have unit tests; local Anisette provisioning and OTP generation pass live on Linux
-(x86_64/aarch64), Windows x64 and macOS arm64 CI runners. Logging in to a real Apple account and
-installing onto a real device remain unverified. See
+(x86_64/aarch64), Windows x64 and macOS arm64 CI runners, and logging in to a real Apple account
+works on macOS (0.1.4). Installing onto a real device remains unverified. See
 [docs/TODO.md](docs/TODO.md).
 
 - [SPEC.md](SPEC.md): behavior specification
