@@ -371,6 +371,12 @@ impl Client {
         if !has("accept") {
             head.push_str("Accept: */*\r\n");
         }
+        // Without Accept-Encoding a server may pick any content coding
+        // (RFC 9110 12.5.3); ask for none. `decode_body` still handles
+        // gzip/deflate for servers that compress anyway.
+        if !has("accept-encoding") {
+            head.push_str("Accept-Encoding: identity\r\n");
+        }
         for (k, v) in &req.headers {
             if k.contains(['\r', '\n', ':']) || v.contains(['\r', '\n']) {
                 return Err(NetError::transport(format!("invalid header `{k}`")));
@@ -399,8 +405,9 @@ impl Client {
         {
             Vec::new()
         } else {
-            read_body_with_progress(&mut reader, &headers, req.max_body, progress)
-                .map_err(|e| e.context(&url.host))?
+            let raw = read_body_with_progress(&mut reader, &headers, req.max_body, progress)
+                .map_err(|e| e.context(&url.host))?;
+            decode_body(raw, &headers, req.max_body).map_err(|e| e.context(&url.host))?
         };
         Ok(Response {
             status,
@@ -573,6 +580,69 @@ pub(crate) fn read_head(r: &mut impl BufRead) -> NetResult<(u16, Vec<(String, St
         }
         return Ok((status, headers));
     }
+}
+
+/// Undoes a `Content-Encoding` of gzip or deflate; other codings fail
+/// instead of being handed to callers as if they were the body.
+fn decode_body(raw: Vec<u8>, headers: &[(String, String)], max: usize) -> NetResult<Vec<u8>> {
+    let coding = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-encoding"))
+        .map(|(_, v)| v.trim().to_ascii_lowercase());
+    let too_large = || NetError::transport(format!("decoded body exceeds {max} bytes"));
+    match coding.as_deref() {
+        None | Some("") | Some("identity") => Ok(raw),
+        Some("gzip") | Some("x-gzip") => {
+            let deflate = gzip_payload(&raw)?;
+            let body =
+                miniz_oxide::inflate::decompress_to_vec_with_limit(deflate, max).map_err(|_| {
+                    NetError::transport(format!("invalid gzip body or larger than {max} bytes"))
+                })?;
+            let trailer = &raw[raw.len() - 8..];
+            let crc = u32::from_le_bytes(trailer[..4].try_into().unwrap());
+            let size = u32::from_le_bytes(trailer[4..].try_into().unwrap());
+            if crate::formats::zip::crc32(&body) != crc || body.len() as u32 != size {
+                return Err(NetError::transport("gzip body failed its checksum"));
+            }
+            Ok(body)
+        }
+        Some("deflate") => {
+            // RFC 9110 "deflate" is zlib-wrapped; accept raw deflate too.
+            miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&raw, max)
+                .or_else(|_| miniz_oxide::inflate::decompress_to_vec_with_limit(&raw, max))
+                .map_err(|_| too_large())
+        }
+        Some(other) => Err(NetError::transport(format!(
+            "unsupported Content-Encoding `{other}`"
+        ))),
+    }
+}
+
+/// The raw deflate stream inside a gzip member (RFC 1952).
+fn gzip_payload(raw: &[u8]) -> NetResult<&[u8]> {
+    let bad = || NetError::transport("invalid gzip header");
+    if raw.len() < 18 || raw[0] != 0x1f || raw[1] != 0x8b || raw[2] != 8 {
+        return Err(bad());
+    }
+    let flags = raw[3];
+    let mut pos = 10;
+    if flags & 0x04 != 0 {
+        let xlen = u16::from_le_bytes([raw[pos], *raw.get(pos + 1).ok_or_else(bad)?]) as usize;
+        pos += 2 + xlen;
+    }
+    for flag in [0x08, 0x10] {
+        if flags & flag != 0 {
+            let nul = raw.get(pos..).ok_or_else(bad)?.iter().position(|&b| b == 0);
+            pos += nul.ok_or_else(bad)? + 1;
+        }
+    }
+    if flags & 0x02 != 0 {
+        pos += 2;
+    }
+    if pos + 8 > raw.len() {
+        return Err(bad());
+    }
+    Ok(&raw[pos..raw.len() - 8])
 }
 
 #[cfg(test)]
@@ -882,5 +952,85 @@ mod proxy_tests {
             .unwrap();
         assert_eq!(read.len(), body.len());
         assert_eq!(last, Some(body.len() as u64));
+    }
+
+    fn gzip(data: &[u8], name: Option<&str>) -> Vec<u8> {
+        let mut out = vec![
+            0x1f,
+            0x8b,
+            8,
+            if name.is_some() { 0x08 } else { 0 },
+            0,
+            0,
+            0,
+            0,
+            0,
+            3,
+        ];
+        if let Some(n) = name {
+            out.extend_from_slice(n.as_bytes());
+            out.push(0);
+        }
+        out.extend(miniz_oxide::deflate::compress_to_vec(data, 6));
+        out.extend(crate::formats::zip::crc32(data).to_le_bytes());
+        out.extend((data.len() as u32).to_le_bytes());
+        out
+    }
+
+    fn coded(coding: &str) -> Vec<(String, String)> {
+        vec![("Content-Encoding".to_owned(), coding.to_owned())]
+    }
+
+    #[test]
+    fn decodes_gzip_and_deflate_bodies() {
+        let plist = b"<?xml version=\"1.0\"?><plist><dict/></plist>".to_vec();
+        for g in [gzip(&plist, None), gzip(&plist, Some("r.plist"))] {
+            assert_eq!(decode_body(g, &coded("gzip"), 1 << 20).unwrap(), plist);
+        }
+        let zlib = miniz_oxide::deflate::compress_to_vec_zlib(&plist, 6);
+        assert_eq!(
+            decode_body(zlib, &coded("deflate"), 1 << 20).unwrap(),
+            plist
+        );
+        assert_eq!(
+            decode_body(plist.clone(), &[], 1 << 20).unwrap(),
+            plist,
+            "no coding: unchanged"
+        );
+        // Corrupt checksum, unknown codings and bombs fail.
+        let mut bad = gzip(&plist, None);
+        let n = bad.len();
+        bad[n - 5] ^= 1;
+        assert!(decode_body(bad, &coded("gzip"), 1 << 20).is_err());
+        assert!(decode_body(plist.clone(), &coded("br"), 1 << 20).is_err());
+        assert!(decode_body(gzip(&vec![0; 4096], None), &coded("gzip"), 1024).is_err());
+    }
+
+    #[test]
+    fn requests_identity_encoding() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let n = std::io::Read::read(&mut s, &mut buf).unwrap();
+            let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let body = gzip(b"hello", None);
+            let mut reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .into_bytes();
+            reply.extend(body);
+            std::io::Write::write_all(&mut s, &reply).unwrap();
+            head
+        });
+        let client = Client::new("test", &[]).unwrap();
+        let resp = client
+            .send(&Request::get(format!("http://{addr}/x")))
+            .unwrap();
+        assert_eq!(resp.body, b"hello", "gzip is decoded even if sent anyway");
+        let head = server.join().unwrap();
+        assert!(head.contains("Accept-Encoding: identity\r\n"), "{head}");
     }
 }
