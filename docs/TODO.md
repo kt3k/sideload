@@ -23,8 +23,6 @@ installation_proxy, misagent), credential input (no-echo password, 2FA prompt), 
 
 ## Known gaps against SPEC
 
-- SPEC 9.5: with `--debug`, unparseable Apple responses are not logged yet (needs token
-  redaction per SPEC 14.2 first).
 - SPEC 9.1: Android ADI download progress shows only 0% and 100%.
-- SPEC 16: missing tests for exit codes, env-var credentials, device selection (no usbmuxd
-  seam), dry-run writing nothing, `--new-cert` end to end, and diagnostic output formats.
+- SPEC 16: `--keep-temp` on failure, re-running without duplicate resources, and an
+  end-to-end check of the signed `--output` IPA are still untested.

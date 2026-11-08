@@ -1,7 +1,8 @@
 //! Explicit opt-in integration check; never prints generated anisette values.
 #![cfg(any(
     target_os = "macos",
-    all(any(target_os = "linux", windows), target_arch = "x86_64")
+    all(any(target_os = "linux", windows), target_arch = "x86_64"),
+    all(target_os = "linux", target_arch = "aarch64")
 ))]
 use sideload::{
     anisette::{AnisetteProvider, local_adi::LocalAdi},

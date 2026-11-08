@@ -47,6 +47,56 @@ pub(crate) fn endpoint(url: &str) -> Result<()> {
     }
     Ok(())
 }
+/// With `--debug`, logs a response Apple sent that could not be used
+/// (SPEC Section 9.5) without leaking secrets (SPEC Section 14.2): known
+/// secrets are replaced, every long token-like run (base64, hex, JWT) is
+/// masked, control characters are dropped, and the text is truncated.
+pub(crate) fn debug_response(what: &str, status: u16, body: &[u8], secrets: &[&str]) {
+    if crate::output::debug_enabled() {
+        crate::output::debug(format!(
+            "{what}: unusable response (HTTP {status}, {} bytes): {}",
+            body.len(),
+            redact_response(body, secrets)
+        ));
+    }
+}
+
+/// Runs of at least this many token characters are masked.
+const TOKEN_RUN: usize = 24;
+
+fn redact_response(body: &[u8], secrets: &[&str]) -> String {
+    let text = String::from_utf8_lossy(&body[..body.len().min(64 * 1024)]);
+    let mut text = text.into_owned();
+    for secret in secrets {
+        if !secret.is_empty() {
+            text = text.replace(secret, "<redacted>");
+        }
+    }
+    let token_char = |c: char| c.is_ascii_alphanumeric() || "+/=_-.".contains(c);
+    let mut out = String::new();
+    let mut run = String::new();
+    let flush = |run: &mut String, out: &mut String| {
+        if run.len() >= TOKEN_RUN {
+            out.push_str("<redacted>");
+        } else {
+            out.push_str(run);
+        }
+        run.clear();
+    };
+    for c in text.chars() {
+        if token_char(c) {
+            run.push(c);
+        } else {
+            flush(&mut run, &mut out);
+            if !c.is_control() {
+                out.push(c);
+            }
+        }
+    }
+    flush(&mut run, &mut out);
+    out.chars().take(1024).collect()
+}
+
 pub(crate) fn description(text: &str, secrets: &[&str]) -> String {
     let mut s = text.to_owned();
     for secret in secrets {
@@ -55,4 +105,27 @@ pub(crate) fn description(text: &str, secrets: &[&str]) -> String {
         }
     }
     s.chars().filter(|c| !c.is_control()).take(512).collect()
+}
+
+#[cfg(test)]
+mod debug_response_tests {
+    use super::redact_response;
+
+    #[test]
+    fn redacts_secrets_and_token_like_runs() {
+        let body = b"<html>Error 500: session T0KEN abc\n\
+            dGhpcyBpcyBhIGxvbmcgYmFzZTY0IHRva2Vu== Bad Gateway</html>";
+        let out = redact_response(body, &["T0KEN"]);
+        assert_eq!(
+            out,
+            "<html>Error 500: session <redacted> abc<redacted> Bad Gateway</html>"
+        );
+        assert!(redact_response(&[b'a'; 5000], &[]) == "<redacted>");
+        assert!(
+            redact_response("é".repeat(2000).as_bytes(), &[])
+                .chars()
+                .count()
+                <= 1024
+        );
+    }
 }

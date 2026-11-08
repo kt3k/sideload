@@ -165,6 +165,7 @@ impl<T: Transport> Gsa<T> {
             )
         })?;
         if !response.is_success() {
+            super::debug_response("GSA", response.status, &response.body, &[]);
             return Err(failed(format!(
                 "Apple authentication returned HTTP {}",
                 response.status
@@ -185,7 +186,10 @@ impl<T: Transport> Gsa<T> {
                 Value::from(0i64),
             )])));
         }
-        plist::from_bytes(&response.body).map_err(|_| failed("invalid Apple authentication plist"))
+        plist::from_bytes(&response.body).map_err(|_| {
+            super::debug_response("GSA", response.status, &response.body, &[]);
+            failed("invalid Apple authentication plist")
+        })
     }
     fn lookup(&mut self) -> Result<()> {
         if self.urls.is_none() {

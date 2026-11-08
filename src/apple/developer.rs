@@ -196,7 +196,11 @@ impl<T: Transport> Developer<T> {
                 "Developer Services transport failed",
             )
         })?;
+        let unusable = |response: &crate::net::http::Response, token: &str| {
+            super::debug_response(operation, response.status, &response.body, &[token]);
+        };
         if !response.is_success() {
+            unusable(&response, self.session.token());
             return Err(Error::new(
                 ErrorCode::AppleTransportError,
                 format!("Developer Services HTTP {}", response.status),
@@ -205,11 +209,13 @@ impl<T: Transport> Developer<T> {
         if response.body.len() > request.max_body {
             return Err(malformed("response size"));
         }
-        let p = plist::from_bytes(&response.body).map_err(|_| malformed("response plist"))?;
-        let c = p
-            .get("resultCode")
-            .and_then(Value::as_i64)
-            .ok_or_else(|| malformed("resultCode"))?;
+        let Some((p, c)) = plist::from_bytes(&response.body).ok().and_then(|p| {
+            let c = p.get("resultCode").and_then(Value::as_i64)?;
+            Some((p, c))
+        }) else {
+            unusable(&response, self.session.token());
+            return Err(malformed("response plist or resultCode"));
+        };
         if c != 0 {
             let message = p
                 .get("userString")
