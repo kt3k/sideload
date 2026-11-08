@@ -177,7 +177,8 @@ for this document; nothing was run.
      such as the stack guard), which macOS does not provide.
   3. Windows x86_64: `extern "sysv64"` hooks and trampolines, CRT and `stat` shims.
 - Keep the upstream file layout (`<config>/lib/*.so`, `<config>/device.json`, and ADI state under
-  `<config>`) so that a machine provisioned by Sideloader is reused as-is.
+  `<config>`), so that the contents of a Sideloader configuration directory copied into this
+  tool's `Sideload` directory are reused as-is.
 
 ## 9. Current implementation in this repository
 

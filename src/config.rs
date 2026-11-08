@@ -16,7 +16,7 @@ pub const ENV_APPLE_PASSWORD: &str = "SIDELOAD_APPLE_PASSWORD";
 
 /// Directory name under the per-OS config root. Fixed for upstream
 /// compatibility regardless of the executable name (SPEC Section 5.1).
-pub const CONFIG_DIR_NAME: &str = "Sideloader";
+pub const CONFIG_DIR_NAME: &str = "Sideload";
 
 /// Environment lookup, injectable for tests.
 pub trait Env {
@@ -174,7 +174,7 @@ pub(crate) mod tests {
         let e = env(&[(ENV_CONFIG_DIR, ""), ("HOME", "/home/u")]);
         assert_eq!(
             config_dir(&e, Os::Linux).unwrap(),
-            PathBuf::from("/home/u/.config/Sideloader")
+            PathBuf::from("/home/u/.config/Sideload")
         );
     }
 
@@ -183,7 +183,7 @@ pub(crate) mod tests {
         let e = env(&[("XDG_CONFIG_HOME", "/cfg"), ("HOME", "/home/u")]);
         assert_eq!(
             config_dir(&e, Os::Linux).unwrap(),
-            PathBuf::from("/cfg/Sideloader")
+            PathBuf::from("/cfg/Sideload")
         );
     }
 
@@ -192,11 +192,11 @@ pub(crate) mod tests {
         let e = env(&[("HOME", "/Users/u"), ("APPDATA", "C:/AppData")]);
         assert_eq!(
             config_dir(&e, Os::MacOs).unwrap(),
-            PathBuf::from("/Users/u/Library/Preferences/Sideloader")
+            PathBuf::from("/Users/u/Library/Preferences/Sideload")
         );
         assert_eq!(
             config_dir(&e, Os::Windows).unwrap(),
-            PathBuf::from("C:/AppData").join("Sideloader")
+            PathBuf::from("C:/AppData").join("Sideload")
         );
     }
 

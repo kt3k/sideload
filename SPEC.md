@@ -52,8 +52,8 @@ Important boundary:
   inconsistent state).
 - Accept credentials both interactively and through environment variables.
 - Support both a local ADI and a remote Anisette server.
-- Share the configuration directory and key files with upstream Sideloader so users can switch
-  between the two.
+- Keep the layout of the configuration directory (keys, ADI state) compatible with upstream
+  Sideloader, so its files can be copied over. The directory itself is separate (Section 6.3).
 
 ### 2.2 Non-Goals
 
@@ -267,8 +267,9 @@ The executable name is Implementation-defined.
 - The implementation in this repository uses `sideload`.
 - Examples in this document write it as `<cli>`.
 - The environment variable prefix is `SIDELOAD_` regardless of the executable name.
-- The configuration directory name (`Sideloader`) and the certificate machine name (`Sideloader`)
-  MUST stay fixed regardless of the executable name, for compatibility with upstream.
+- The configuration directory name is `Sideload` regardless of the executable name.
+- The certificate machine name (`Sideloader`) MUST stay fixed, so that certificates created by
+  upstream Sideloader and by this tool are recognized by both.
 
 ### 5.2 Command Tree
 
@@ -383,9 +384,12 @@ An environment variable set to the empty string MUST be treated as unset.
 
 1. If `SIDELOAD_CONFIG_DIR` is set, use its value.
 2. Otherwise use the per-OS default:
-   - Linux and others: `${XDG_CONFIG_HOME:-~/.config}/Sideloader`
-   - macOS: `~/Library/Preferences/Sideloader`
-   - Windows: `%AppData%\Sideloader`
+   - Linux and others: `${XDG_CONFIG_HOME:-~/.config}/Sideload`
+   - macOS: `~/Library/Preferences/Sideload`
+   - Windows: `%AppData%\Sideload`
+
+The upstream directory (`Sideloader`) is not read. Users switching from upstream can copy its
+contents into this directory.
 
 Create the directory if it does not exist.
 
@@ -1132,8 +1136,8 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 ### 17.3 Operational Validation Before Production (RECOMMENDED)
 
 - Run the `Real Integration Profile` in Section 16.7 on each target OS (Linux, macOS, Windows).
-- Verify that a configuration directory and keys created by upstream Sideloader can be taken over
-  as-is.
+- Verify that the contents of an upstream Sideloader configuration directory, copied into this
+  tool's directory, are reused as-is (keys and ADI state).
 
 ## Appendix A. Differences from Upstream Sideloader CLI
 
@@ -1173,3 +1177,5 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
     implementation uses `sideload`).
 12. Errors are reported with an error code and the phase name.
 13. `install --sidestore` downloads and installs the latest SideStore release from GitHub.
+14. The configuration directory is named `Sideload` (upstream: `Sideloader`) and environment
+    variables use the `SIDELOAD_` prefix. Upstream's directory is not read.
