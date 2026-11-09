@@ -150,13 +150,21 @@ architecture and ELF ABI, without incorporating GPL/AGPL emulator code. Anisette
 are not dependencies. The staged implementation and remaining work are tracked in
 [ANISETTE.md](ANISETTE.md) (on-device generation is not yet available in the app).
 
-Backend selection at the Core Interface is determined by `anisette_server`:
+Backend selection at the Core Interface is explicit when `anisette_mode` is supplied:
 
-- A non-empty URL explicitly selects the existing remote-v3 backend (CLI 9.1). Validate the
-  `http`/`https` URL as in CLI 5.6. Existing saved URLs retain this behavior.
-- Missing, null or empty selects the host's on-device header callback. If no engine callback is
-  installed, fail with `anisette_unavailable` in `PreparingAnisette` before asking for a password
-  or 2FA code. NEVER silently use a public server after a local failure.
+- `"local"` selects the in-process Rust interpreter and ignores any saved remote URL. Acquire
+  the official AArch64 libraries regardless of the host CPU, and reuse the CLI provisioning
+  protocol through the interpreted `Engine`. No Swift header callback is required.
+- `"remote"` requires a non-empty `anisette_server` URL. Validate its `http`/`https` URL as in
+  CLI 5.6; a missing URL fails during `PreparingAnisette` with `anisette_unavailable`.
+- Missing/null/empty `anisette_mode` preserves the earlier interface: a non-empty server URL
+  selects remote-v3; otherwise the scoped host callback is required. A missing callback fails
+  before password or 2FA interaction. Unknown modes/types fail with `invalid_arguments`.
+
+The app defaults to Remote Server while the local backend is experimental, preserving existing
+settings. It MAY expose `On Device (Experimental)` as an explicit opt-in. Local failures MUST
+NEVER silently use a public server. Local mode MUST NOT become the default or be described as
+stable before successful Apple provisioning/OTP validation and real-device validation.
 
 The on-device engine MUST interpret the Android AArch64 ADI libraries as guest data. It MUST
 NOT use JIT, host executable mappings, private Apple frameworks, a debugger entitlement, or a
@@ -169,9 +177,13 @@ Apple; on-device generation does not mean offline provisioning.
 Local identity, provisioning blobs and libraries belong under a separate `data_dir/anisette-local`
 directory with the same protection and backup exclusions as Section 4.1. Do not reuse remote
 server state as local provisioning. Failed downloads or provisioning MUST NOT overwrite valid
-state. Resetting identity/provisioning requires an explicit user action.
+state. Guest files are read and written in a private staging copy of the provisioning
+directory; copy validated files back atomically per file only after successful header generation.
+The guest sees virtual `/adi` paths and MUST NOT access files outside this directory.
+Resetting identity/provisioning requires an explicit user action.
 
-The host returns fresh headers synchronously through `anisette_headers` for each request on the
+The interpreted provider generates headers directly in Rust. For hosts using the optional
+callback bridge instead, the host returns fresh headers through `anisette_headers` on the
 core worker thread; it MUST NOT cache and reuse an OTP across header requests. The callback
 returns a malloc-allocated UTF-8 JSON object `{"headers":{...}}` or NULL on failure. The core
 frees it, accepts at most 64 KiB, and validates header names, values and required fields before
@@ -184,9 +196,9 @@ core call and MUST NOT be retained or used to reenter `sideload_call`.
 
 Passwords and 2FA codes MUST NOT be passed to the engine. OTPs, machine IDs, provisioning blobs
 and raw engine responses MUST NOT appear in logs or errors. Remote mode remains opt-in: the UI
-MUST label its server as a third party. Until the independent engine can provision and generate
-headers successfully, Settings MUST keep local mode unavailable rather than advertise a working
-serverless option. The existing remote configuration remains usable during implementation.
+MUST label its server as a third party. The UI MUST label local mode as experimental during validation. `Check Anisette` calls
+`prepare_anisette` without credentials and reports success only after headers are actually
+generated. The existing remote configuration remains usable during implementation.
 
 ### 4.5 Managed App Record
 
@@ -391,9 +403,10 @@ response, both JSON objects. The reference implementation exposes it as a C func
 
 ```json
 {
-  "op": "install | refresh | apps | forget | connect | import_pairing | login | version",
+  "op": "install | refresh | apps | forget | connect | import_pairing | login | prepare_anisette | version",
   "config": {
     "data_dir": "<path>",
+    "anisette_mode": "<local | remote | null (legacy selection)>",
     "anisette_server": "<url or null>",
     "device_host": "<host or null (default 10.7.0.1)>",
     "self_bundle": "<path of <App>'s own .app or null>"
@@ -426,6 +439,8 @@ Failure: `{"ok": false, "error": {"code": "<CLI 13.1 code>", "phase": "<phase or
 Results:
 
 - `version`: `{"version": "<semver>"}`
+- `prepare_anisette`: `{"ready": true}` only after header generation; no account or secret
+  values are returned. Runs acquisition/provisioning when needed in local mode.
 - `connect`: `{"udid", "name", "product_version"}`
 - `import_pairing`: `{"udid": "<from the file, or null>"}`
 - `login`: `{"teams": [{"team_id", "name"}]}`
@@ -500,10 +515,12 @@ It SHOULD keep the screen awake while an install or refresh started from the Use
   `io.github.kt3k.sideload.refresh`, fixed rather than derived from the bundle identifier,
   because sideloading tools rewrite `CFBundleIdentifier` but not
   `BGTaskSchedulerPermittedIdentifiers`.
-- On-device Anisette is in development: the MIT interpreter foundation, scoped host callback
-  and basic guest ELF loader exist, but ADI execution, provisioning and the local Settings option
-  are not implemented.
-  The app still requires a remote server. See [ANISETTE.md](ANISETTE.md).
+- On-device Anisette is experimental: scalar/integer SIMD instructions, guest ELF linking,
+  Android runtime shims, interpreted `Engine`, provisioning staging and Settings integration
+  are implemented. Official-library initialization, the unprovisioned query and invalid-input
+  rejection pass on a Linux x86_64 host interpreting AArch64. Successful Apple provisioning,
+  OTP generation/rotation and iOS device login/refresh remain unverified. See
+  [ANISETTE.md](ANISETTE.md).
 - The anisette server has no default; the settings screen offers SideStore's public server
   (`https://ani.sidestore.io`) as a one-tap suggestion, labeled as a third party.
 - Build: `ios/build-core.sh` (static library, Cargo profile `ios`), then
@@ -531,7 +548,7 @@ Real integration (RECOMMENDED before release):
 - Connection check with the VPN on and off.
 - Install of a small IPA, then a refresh that only installs profiles and extends the expiry.
 - A refresh from the Shortcuts automation while the device is locked.
-- Local Anisette: first-run acquisition, Apple provisioning, distinct OTPs on repeated requests,
+- Local Anisette: first-run acquisition, Apple provisioning, fresh OTP requests and rotation after an OTP time window,
   real account login, relaunch with saved state, and locked-device refresh without a remote URL.
   This validation is pending; interpreter unit tests alone do not establish ADI compatibility.
 

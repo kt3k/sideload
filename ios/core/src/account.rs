@@ -12,7 +12,7 @@ use sideload::formats::base64;
 use sideload::pipeline::Phase;
 use sideload::{output, session_store};
 
-use crate::config::{Account, Config};
+use crate::config::{Account, AnisetteMode, Config};
 use crate::error::{At, CResult, CoreError};
 
 /// Asks the user for a 2FA code; `None` cancels (Section 9.3).
@@ -27,6 +27,17 @@ pub struct LoggedIn {
 }
 
 fn anisette(cfg: &Config) -> CResult<Box<dyn AnisetteProvider>> {
+    if cfg.anisette_mode == Some(AnisetteMode::Local) {
+        return Ok(Box::new(crate::local_anisette::LocalAnisette::new(
+            &cfg.data_dir,
+        )?));
+    }
+    if cfg.anisette_mode == Some(AnisetteMode::Remote) && cfg.anisette_server.is_none() {
+        return Err(CoreError::new(
+            ErrorCode::AnisetteUnavailable,
+            "remote Anisette needs a server URL in Settings",
+        ));
+    }
     let Some(url) = cfg.anisette_server.as_deref() else {
         return Ok(Box::new(crate::anisette::OnDevice::new()?));
     };
@@ -38,6 +49,14 @@ fn anisette(cfg: &Config) -> CResult<Box<dyn AnisetteProvider>> {
         )
     })?;
     Ok(Box::new(RemoteV3::new(url, &cfg.data_dir)?))
+}
+
+/// Prepares the selected backend without credentials; returns no header values.
+pub fn prepare_anisette(cfg: &Config) -> CResult<()> {
+    let phase = Phase::PreparingAnisette.as_str();
+    output::phase(Phase::PreparingAnisette);
+    anisette(cfg).at(phase)?.headers().at(phase)?;
+    Ok(())
 }
 
 pub fn decode_session(s: &str) -> Option<sideload::apple::gsa::Session> {
@@ -150,6 +169,7 @@ mod tests {
         let cfg = Config {
             data_dir: dir,
             anisette_server: None,
+            anisette_mode: None,
             device_host: "x".into(),
             self_bundle: None,
         };
@@ -163,6 +183,33 @@ mod tests {
         };
         let err = log_in(&bad, &Account::default(), &mut never).err().unwrap();
         assert_eq!(err.code, ErrorCode::InvalidArguments);
+        let missing = Config {
+            anisette_server: None,
+            anisette_mode: Some(AnisetteMode::Remote),
+            ..bad
+        };
+        assert_eq!(
+            prepare_anisette(&missing).unwrap_err().code,
+            ErrorCode::AnisetteUnavailable
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_mode_never_falls_back_to_a_stored_server() {
+        let dir = temp_dir("local-no-fallback");
+        std::os::unix::fs::symlink(&dir, dir.join("anisette-local")).unwrap();
+        let cfg = Config {
+            data_dir: dir,
+            anisette_server: Some("ftp://unused.example".into()),
+            anisette_mode: Some(AnisetteMode::Local),
+            device_host: "x".into(),
+            self_bundle: None,
+        };
+        let error = prepare_anisette(&cfg).unwrap_err();
+        assert_eq!(error.code, ErrorCode::AnisetteUnavailable);
+        assert_eq!(error.phase.as_deref(), Some("PreparingAnisette"));
+        assert!(!error.message.contains("unused.example"));
     }
 
     #[test]

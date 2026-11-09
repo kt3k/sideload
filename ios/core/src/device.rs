@@ -103,6 +103,7 @@ mod tests {
         Config {
             data_dir: dir.to_path_buf(),
             anisette_server: None,
+            anisette_mode: None,
             device_host: "127.0.0.1".into(),
             self_bundle: None,
         }

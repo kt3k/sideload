@@ -7,20 +7,67 @@ use crate::{
 };
 use std::{fs, io::Cursor, path::Path};
 const APK: &str = "https://apps.mzstatic.com/content/android-apple-music-apk/applemusic.apk";
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Abi {
+    X86_64,
+    Aarch64,
+}
+impl Abi {
+    fn name(self) -> &'static str {
+        match self {
+            Self::X86_64 => "x86_64",
+            Self::Aarch64 => "arm64-v8a",
+        }
+    }
+    fn machine(self) -> u16 {
+        match self {
+            Self::X86_64 => 62,
+            Self::Aarch64 => 183,
+        }
+    }
+}
 pub fn ensure(client: &Client, config: &Path) -> Result<()> {
+    let abi = if cfg!(target_arch = "x86_64") {
+        Abi::X86_64
+    } else if cfg!(target_arch = "aarch64") {
+        Abi::Aarch64
+    } else {
+        return Err(Error::new(
+            ErrorCode::AdiDownloadFailed,
+            "unsupported ADI CPU",
+        ));
+    };
+    ensure_for_abi(client, config, abi)
+}
+
+/// The iOS interpreter always needs AArch64, including tests on x86_64 hosts.
+pub fn ensure_for_abi(client: &Client, config: &Path, abi: Abi) -> Result<()> {
     let dir = config.join("lib");
     let names = ["libstoreservicescore.so", "libCoreADI.so"];
+    let error = |msg: &str| Error::new(ErrorCode::AdiDownloadFailed, msg);
+    if let Ok(metadata) = fs::symlink_metadata(&dir) {
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(error("invalid ADI library directory"));
+        }
+    }
     if names.iter().all(|n| dir.join(n).is_file()) {
+        for name in names {
+            let path = dir.join(name);
+            let m = fs::symlink_metadata(&path).map_err(|_| error("cannot inspect ADI library"))?;
+            if !m.is_file() || m.file_type().is_symlink() || m.len() > 32 * 1024 * 1024 {
+                return Err(error("invalid ADI library file"));
+            }
+            let bytes = fs::read(path).map_err(|_| error("cannot read ADI library"))?;
+            if Elf::parse(&bytes)
+                .map_err(|_| error("invalid cached ADI ELF"))?
+                .machine
+                != abi.machine()
+            {
+                return Err(error("cached ADI architecture does not match selected CPU"));
+            }
+        }
         return Ok(());
     }
-    let error = |msg: &str| Error::new(ErrorCode::AdiDownloadFailed, msg);
-    let abi = if cfg!(target_arch = "x86_64") {
-        "x86_64"
-    } else if cfg!(target_arch = "aarch64") {
-        "arm64-v8a"
-    } else {
-        return Err(error("unsupported ADI CPU"));
-    };
     crate::output::info("Downloading Apple ADI libraries: 0%");
     let mut reporter = Progress::default();
     let response = client
@@ -40,7 +87,7 @@ pub fn ensure(client: &Client, config: &Path) -> Result<()> {
         ZipReader::new(Cursor::new(response.body)).map_err(|_| error("invalid Apple Music APK"))?;
     let mut libraries = Vec::new();
     for name in names {
-        let path = format!("lib/{abi}/{name}");
+        let path = format!("lib/{}/{name}", abi.name());
         let i = zip
             .entries()
             .iter()
@@ -52,7 +99,13 @@ pub fn ensure(client: &Client, config: &Path) -> Result<()> {
         let b = zip
             .read(i)
             .map_err(|_| error("cannot extract ADI library"))?;
-        Elf::parse(&b).map_err(|_| error("APK contains unsupported ADI ELF"))?;
+        if Elf::parse(&b)
+            .map_err(|_| error("APK contains unsupported ADI ELF"))?
+            .machine
+            != abi.machine()
+        {
+            return Err(error("APK ADI architecture does not match selected CPU"));
+        }
         libraries.push((name, b));
     }
     let mut builder = fs::DirBuilder::new();
@@ -132,7 +185,33 @@ impl Progress {
 
 #[cfg(test)]
 mod tests {
-    use super::Progress;
+    use super::*;
+
+    #[test]
+    fn explicit_guest_abi_checks_cached_library_architecture_without_network() {
+        let root = crate::pipeline::workdir::WorkDir::create(false).unwrap();
+        let dir = root.path().join("lib");
+        fs::create_dir(&dir).unwrap();
+        let mut bytes = super::super::elf::tests::fixture();
+        bytes[18..20].copy_from_slice(&183u16.to_le_bytes());
+        for name in ["libstoreservicescore.so", "libCoreADI.so"] {
+            fs::write(dir.join(name), &bytes).unwrap();
+        }
+        let client = Client::new("test", &[]).unwrap();
+        ensure_for_abi(&client, root.path(), Abi::Aarch64).unwrap();
+        assert!(ensure_for_abi(&client, root.path(), Abi::X86_64).is_err());
+        fs::write(dir.join("libCoreADI.so"), b"malformed").unwrap();
+        assert!(ensure_for_abi(&client, root.path(), Abi::Aarch64).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlink_library_cache_before_network() {
+        let root = crate::pipeline::workdir::WorkDir::create(false).unwrap();
+        std::os::unix::fs::symlink(root.path(), root.path().join("lib")).unwrap();
+        let client = Client::new("test", &[]).unwrap();
+        assert!(ensure_for_abi(&client, root.path(), Abi::Aarch64).is_err());
+    }
 
     #[test]
     fn progress_lines() {

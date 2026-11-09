@@ -94,14 +94,17 @@ impl Image {
     pub fn symbol(&self, name: &str) -> Option<u64> {
         self.exports.get(name).copied()
     }
+    pub fn exports(&self) -> impl Iterator<Item = (&str, u64)> {
+        self.exports.iter().map(|(k, v)| (k.as_str(), *v))
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::emulation::Cpu;
     // ELF ABI fixture: code + data/BSS, symbols, one RELATIVE relocation.
-    fn fixture() -> Vec<u8> {
+    pub(crate) fn fixture() -> Vec<u8> {
         let mut b = vec![0; 0x2010];
         fn h(b: &mut [u8], p: usize, n: u16) {
             b[p..p + 2].copy_from_slice(&n.to_le_bytes());

@@ -1,10 +1,16 @@
-//! MIT AArch64 interpreter foundation for on-device ADI. This is deliberately
-//! incomplete: unknown instructions trap; it cannot yet run Apple's libraries.
+//! MIT AArch64 interpreter for on-device ADI. Unknown instructions trap.
+//! Official-library initialization works; complete provisioning is under validation.
 //! Guest bytes are ordinary Rust data, never host executable memory.
 
 use std::ops::Range;
 
+pub mod adi;
 pub mod elf;
+#[cfg(test)]
+mod extended_tests;
+pub mod runtime;
+mod scalar;
+mod vector;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fault {
@@ -50,6 +56,20 @@ pub struct Memory {
     allocated: usize,
 }
 impl Memory {
+    pub fn append(&mut self, mut other: Self) -> Result<()> {
+        if other.allocated > Self::LIMIT - self.allocated
+            || other.regions.iter().any(|a| {
+                self.regions
+                    .iter()
+                    .any(|b| a.range.start < b.range.end && b.range.start < a.range.end)
+            })
+        {
+            return Err(Fault::Mapping);
+        }
+        self.allocated += other.allocated;
+        self.regions.append(&mut other.regions);
+        Ok(())
+    }
     /// Fixed total allocation ceiling; guest pointers never become host pointers.
     pub const LIMIT: usize = 128 * 1024 * 1024;
     pub fn map(
@@ -134,6 +154,8 @@ pub struct Cpu {
     pub pc: u64,
     /// N,Z,C,V, in bits 3..0.
     pub nzcv: u8,
+    pub v: [u128; 32],
+    pub tpidr: u64,
 }
 fn signed(value: u32, bits: u32) -> u64 {
     (((value as i32) << (32 - bits)) >> (32 - bits)) as i64 as u64
@@ -344,23 +366,12 @@ impl Cpu {
                 self.arithmetic(a, b, op & (1 << 30) != 0, op & (1 << 29) != 0, wide)
             };
             self.set(rd, value, false, wide);
-        } else if op & 0x3f000000 == 0x39000000 {
-            // integer LDR/STR unsigned immediate
-            let size = 1usize << (op >> 30);
-            let kind = (op >> 22) & 3;
-            if kind > 1 {
-                return Err(Fault::UnsupportedInstruction(op));
-            }
+        } else if op & 0x3b000000 == 0x39000000 {
             let address = self
                 .reg(rn, true)
-                .wrapping_add((((op >> 10) & 0xfff) as u64) * size as u64);
-            if kind == 0 {
-                memory.store(address, size, self.reg(rd, false))?;
-            } else {
-                let value = memory.load(address, size)?;
-                self.set(rd, value, false, size == 8);
-            }
-        } else {
+                .wrapping_add((((op >> 10) & 0xfff) as u64) * scalar::transfer_size(op)? as u64);
+            self.transfer(memory, op, address)?;
+        } else if !self.scalar(memory, op)? && !self.vector(memory, op)? {
             return Err(Fault::UnsupportedInstruction(op));
         }
         self.pc = next;

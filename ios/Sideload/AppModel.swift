@@ -84,8 +84,8 @@ final class AppModel: ObservableObject {
     }
 
     private func requireAccount() -> Bool {
-        if CoreClient.hasAccount && !Settings.anisetteServer.isEmpty { return true }
-        alert = "Enter your Apple ID, password and an anisette server in Settings first."
+        if CoreClient.hasAccount && (Settings.anisetteMode == "local" || !Settings.anisetteServer.trimmingCharacters(in: .whitespaces).isEmpty) { return true }
+        alert = "Enter your Apple ID and password, then configure Anisette in Settings."
         return false
     }
 
@@ -137,6 +137,12 @@ final class AppModel: ObservableObject {
         } else if let error = response.error {
             alert = error.localizedDescription
         }
+    }
+
+    func checkAnisette() async {
+        guard !busy else { return }
+        let response = await run("prepare_anisette", withAccount: false)
+        alert = response.error?.localizedDescription ?? "Anisette is ready."
     }
 
     func testLogin() async {

@@ -17,11 +17,12 @@ Checked items have implementation and mock coverage; live validation is noted ex
 - [ ] iOS app ([ios/SPEC.md](../ios/SPEC.md)): core, Swift UI, Shortcuts action, background
   refresh and CI build are implemented; install / refresh on a real device over LocalDevVPN
   is unverified (ios/SPEC.md Section 14, real integration).
-- [ ] iOS app: on-device Anisette without a server ([design and stages](../ios/ANISETTE.md)).
-  MIT policy retained; independent AArch64 interpreter, basic guest ELF loader and Swift/Rust header callback
-  implemented and tested. Remaining: ADI instruction coverage, Android imports and multi-library linking,
-  Engine + provisioning integration, local settings/storage and real-device login/refresh.
-  The app still needs an explicitly configured remote server until these are complete.
+- [ ] iOS app: on-device Anisette without a server ([implementation status](../ios/ANISETTE.md)).
+  MIT interpreter with scalar/integer SIMD, guest ELF linking, bounded Android runtime,
+  interpreted provisioning Engine and experimental Settings mode are implemented. Official
+  AArch64 ADI initialization/query and invalid SPIM rejection pass under interpretation.
+  Pending: successful Apple provisioning and OTP rotation, then real iOS login/install/refresh.
+  Remote remains the default; local mode never silently falls back to a server.
 
 
 ## Done

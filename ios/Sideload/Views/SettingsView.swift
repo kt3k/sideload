@@ -6,6 +6,7 @@ struct SettingsView: View {
     @AppStorage("appleId") private var appleId = ""
     @AppStorage("teamId") private var teamId = ""
     @AppStorage("anisetteServer") private var anisetteServer = ""
+    @AppStorage("anisetteMode") private var anisetteMode = "remote"
     @AppStorage("deviceHost") private var deviceHost = ""
     @State private var password = ""
     @State private var hasPassword = Keychain.get(Keychain.password) != nil
@@ -42,19 +43,32 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    TextField("https://...", text: $anisetteServer)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    if anisetteServer.isEmpty {
-                        Button("Use \(Settings.suggestedAnisetteServer)") {
-                            anisetteServer = Settings.suggestedAnisetteServer
+                    Picker("Generate", selection: $anisetteMode) {
+                        Text("On Device (Experimental)").tag("local")
+                        Text("Remote Server").tag("remote")
+                    }
+                    .disabled(model.busy)
+                    if anisetteMode == "remote" {
+                        TextField("https://...", text: $anisetteServer)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        if anisetteServer.isEmpty {
+                            Button("Use \(Settings.suggestedAnisetteServer)") {
+                                anisetteServer = Settings.suggestedAnisetteServer
+                            }
                         }
                     }
+                    Button("Check Anisette") { Task { await model.checkAnisette() } }
+                        .disabled(model.busy || (anisetteMode == "remote" && anisetteServer.trimmingCharacters(in: .whitespaces).isEmpty))
                 } header: {
-                    Text("Anisette Server")
+                    Text("Anisette")
                 } footer: {
-                    Text("Required. An anisette server is a third party that generates Apple's device identification data for logging in. It does not receive your password.")
+                    if anisetteMode == "local" {
+                        Text("Experimental. Generates Apple's device identification data on this device. Initial setup downloads Apple components and contacts Apple. Keep this app open for the first check. Your Apple ID and password are not needed for this check.")
+                    } else {
+                        Text("An anisette server is a third party that generates Apple's device identification data for logging in. It does not receive your password. Local failures never switch to a remote server automatically.")
+                    }
                 }
 
                 Section {

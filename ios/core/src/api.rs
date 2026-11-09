@@ -96,6 +96,10 @@ fn dispatch(req: &Value, two_factor: TwoFactor<'_>) -> Response {
         };
     }
     match op {
+        "prepare_anisette" => {
+            tryr!(account::prepare_anisette(&cfg));
+            Response::ok(Value::object([("ready", Value::Bool(true))]))
+        }
         "apps" => {
             let records = tryr!(ops::list(&cfg));
             Response::ok(Value::object([("apps", records_json(&records))]))

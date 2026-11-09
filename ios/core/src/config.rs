@@ -8,10 +8,18 @@ use crate::error::{CResult, invalid};
 
 pub const DEFAULT_DEVICE_HOST: &str = "10.7.0.1";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnisetteMode {
+    Local,
+    Remote,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub data_dir: PathBuf,
     pub anisette_server: Option<String>,
+    /// None preserves the legacy remote/host-callback selection.
+    pub anisette_mode: Option<AnisetteMode>,
     pub device_host: String,
     /// `<App>`'s own `.app` (Section 4.6).
     pub self_bundle: Option<PathBuf>,
@@ -56,6 +64,12 @@ impl Config {
         Ok(Config {
             data_dir: PathBuf::from(req_str(Some(v), "data_dir")?),
             anisette_server: opt_str(Some(v), "anisette_server")?,
+            anisette_mode: match opt_str(Some(v), "anisette_mode")?.as_deref() {
+                None => None,
+                Some("local") => Some(AnisetteMode::Local),
+                Some("remote") => Some(AnisetteMode::Remote),
+                Some(_) => return Err(invalid("`anisette_mode` must be local or remote")),
+            },
             device_host: opt_str(Some(v), "device_host")?
                 .unwrap_or_else(|| DEFAULT_DEVICE_HOST.to_owned()),
             self_bundle: opt_str(Some(v), "self_bundle")?.map(PathBuf::from),
@@ -109,5 +123,29 @@ mod tests {
             sideload::ErrorCode::InvalidArguments
         );
         assert!(Account::from_json(None).is_err());
+    }
+    #[test]
+    fn explicit_anisette_modes_preserve_legacy_configuration() {
+        for (field, expected) in [
+            ("", None),
+            (r#", "anisette_mode":"local""#, Some(AnisetteMode::Local)),
+            (r#", "anisette_mode":"remote""#, Some(AnisetteMode::Remote)),
+        ] {
+            let value = json::parse(&format!(
+                r#"{{"data_dir":"/d","anisette_server":"https://saved.example"{field}}}"#
+            ))
+            .unwrap();
+            let config = Config::from_json(Some(&value)).unwrap();
+            assert_eq!(config.anisette_mode, expected);
+            assert_eq!(
+                config.anisette_server.as_deref(),
+                Some("https://saved.example")
+            );
+        }
+        for field in [r#""unknown""#, "true", "123"] {
+            let value =
+                json::parse(&format!(r#"{{"data_dir":"/d","anisette_mode":{field}}}"#)).unwrap();
+            assert!(Config::from_json(Some(&value)).is_err());
+        }
     }
 }

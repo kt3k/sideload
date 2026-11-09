@@ -14,6 +14,7 @@ pub mod device;
 pub mod emulation;
 pub mod error;
 pub mod ffi;
+pub mod local_anisette;
 pub mod ops;
 pub mod profile;
 pub mod registry;

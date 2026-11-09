@@ -16,6 +16,11 @@ enum Settings {
         get { defaults.string(forKey: "anisetteServer") ?? "" }
         set { defaults.set(newValue, forKey: "anisetteServer") }
     }
+    /// Remote remains the default while local generation is experimental.
+    static var anisetteMode: String {
+        get { defaults.string(forKey: "anisetteMode") == "local" ? "local" : "remote" }
+        set { defaults.set(newValue, forKey: "anisetteMode") }
+    }
     static var deviceHost: String {
         get { defaults.string(forKey: "deviceHost") ?? "" }
         set { defaults.set(newValue, forKey: "deviceHost") }
@@ -52,7 +57,8 @@ enum CoreClient {
             "self_bundle": Bundle.main.bundlePath,
         ]
         let anisette = Settings.anisetteServer.trimmingCharacters(in: .whitespaces)
-        if !anisette.isEmpty { c["anisette_server"] = anisette }
+        c["anisette_mode"] = Settings.anisetteMode
+        if Settings.anisetteMode == "remote" && !anisette.isEmpty { c["anisette_server"] = anisette }
         let host = Settings.deviceHost.trimmingCharacters(in: .whitespaces)
         if !host.isEmpty { c["device_host"] = host }
         return c
