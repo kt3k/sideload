@@ -7,10 +7,10 @@ class Sideload < Formula
   head "https://github.com/kt3k/sideload.git", branch: "main"
 
   # Stable release: fill in at each tag. Get the checksum with
-  #   curl -fsSL https://github.com/kt3k/sideload/archive/refs/tags/v0.1.9.tar.gz | shasum -a 256
-  url "https://github.com/kt3k/sideload/archive/refs/tags/v0.1.9.tar.gz"
-  sha256 "db7e4d3048f2ed21d03405729a9a8abadf408c50161764213877589770e9b9e2"
-  version "0.1.9"
+  #   curl -fsSL https://github.com/kt3k/sideload/archive/refs/tags/v0.1.10.tar.gz | shasum -a 256
+  url "https://github.com/kt3k/sideload/archive/refs/tags/v0.1.10.tar.gz"
+  sha256 "61d46edf50a2ef88adc12b7941949ebae0682c148ef2d8ea0d17e627809d83a4"
+  version "0.1.10"
 
   depends_on "rust" => :build
 
