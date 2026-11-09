@@ -1,5 +1,5 @@
-//! `install --sidestore`: the latest SideStore release from GitHub
-//! (SPEC Section 7.7).
+//! `install --sidestore` and `install --sideload-app`: an IPA attached to a
+//! GitHub release (SPEC Sections 7.7, 7.8).
 
 use std::path::{Path, PathBuf};
 
@@ -11,9 +11,39 @@ pub const RELEASES_URL: &str = "https://api.github.com/repos/SideStore/SideStore
 pub const ASSET_NAME: &str = "SideStore.ipa";
 pub const MAX_IPA_BYTES: usize = 1 << 30;
 
+/// The release tag the iOS app workflow publishes `Sideload.ipa` under
+/// (SPEC Section 7.8).
+pub const SIDELOAD_APP_TAG: &str = "sideload-app";
+
+/// Where an app's IPA is published.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Source {
+    /// For messages, e.g. `SideStore`.
+    pub name: &'static str,
+    /// GitHub API URL returning one release.
+    pub release_url: &'static str,
+    /// Exact asset name.
+    pub asset: &'static str,
+}
+
+/// The latest SideStore release (SPEC Section 7.7).
+pub const SIDESTORE: Source = Source {
+    name: "SideStore",
+    release_url: RELEASES_URL,
+    asset: ASSET_NAME,
+};
+
+/// The Sideload iOS app (SPEC Section 7.8, `ios/SPEC.md`).
+pub const SIDELOAD_APP: Source = Source {
+    name: "the Sideload app",
+    release_url: "https://api.github.com/repos/kt3k/sideload/releases/tags/sideload-app",
+    asset: "Sideload.ipa",
+};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
     pub tag: String,
+    pub asset: String,
     pub download_url: String,
     pub size: Option<u64>,
     pub sha256: Option<[u8; 32]>,
@@ -25,6 +55,11 @@ fn failed(msg: impl Into<String>) -> Error {
 
 /// Extracts the `SideStore.ipa` asset from a `releases/latest` response.
 pub fn parse_release(body: &str) -> Result<Release> {
+    parse_release_asset(body, ASSET_NAME)
+}
+
+/// Extracts the asset named `asset_name` from a GitHub release response.
+pub fn parse_release_asset(body: &str, asset_name: &str) -> Result<Release> {
     let v = json::parse(body).map_err(|e| failed(format!("invalid GitHub API response: {e}")))?;
     let tag = v
         .get("tag_name")
@@ -37,15 +72,15 @@ pub fn parse_release(body: &str) -> Result<Release> {
         .ok_or_else(|| failed("GitHub API response has no assets"))?;
     let asset = assets
         .iter()
-        .find(|a| a.get("name").and_then(json::Value::as_str) == Some(ASSET_NAME))
-        .ok_or_else(|| failed(format!("release {tag} has no {ASSET_NAME} asset")))?;
+        .find(|a| a.get("name").and_then(json::Value::as_str) == Some(asset_name))
+        .ok_or_else(|| failed(format!("release {tag} has no {asset_name} asset")))?;
     let download_url = asset
         .get("browser_download_url")
         .and_then(json::Value::as_str)
         .filter(|u| u.starts_with("https://"))
         .ok_or_else(|| {
             failed(format!(
-                "{ASSET_NAME} in release {tag} has no HTTPS download URL"
+                "{asset_name} in release {tag} has no HTTPS download URL"
             ))
         })?
         .to_owned();
@@ -65,6 +100,7 @@ pub fn parse_release(body: &str) -> Result<Release> {
     };
     Ok(Release {
         tag,
+        asset: asset_name.to_owned(),
         download_url,
         size,
         sha256,
@@ -87,7 +123,8 @@ pub fn verify(release: &Release, body: &[u8]) -> Result<()> {
     if let Some(size) = release.size {
         if body.len() as u64 != size {
             return Err(failed(format!(
-                "{ASSET_NAME} size mismatch: expected {size} bytes, got {}",
+                "{} size mismatch: expected {size} bytes, got {}",
+                release.asset,
                 body.len()
             )));
         }
@@ -95,12 +132,12 @@ pub fn verify(release: &Release, body: &[u8]) -> Result<()> {
     match release.sha256 {
         Some(expected) => {
             if crate::crypto::sha256(body) != expected {
-                return Err(failed(format!("{ASSET_NAME} SHA-256 digest mismatch")));
+                return Err(failed(format!("{} SHA-256 digest mismatch", release.asset)));
             }
         }
         None => crate::output::debug(format!(
-            "release {} publishes no SHA-256 digest for {ASSET_NAME}; relying on HTTPS",
-            release.tag
+            "release {} publishes no SHA-256 digest for {}; relying on HTTPS",
+            release.tag, release.asset
         )),
     }
     Ok(())
@@ -114,11 +151,16 @@ pub fn http_client() -> Result<Client> {
     .map_err(|e| failed(e.to_string()))
 }
 
-/// Downloads the latest release into `dir`, returning the IPA path.
+/// Downloads the latest SideStore release into `dir`, returning the IPA path.
 pub fn download_latest(client: &Client, dir: &Path) -> Result<(PathBuf, Release)> {
+    download(client, dir, &SIDESTORE)
+}
+
+/// Downloads `source`'s IPA into `dir`, returning its path.
+pub fn download(client: &Client, dir: &Path, source: &Source) -> Result<(PathBuf, Release)> {
     let resp = client
         .send(
-            &Request::get(RELEASES_URL)
+            &Request::get(source.release_url)
                 .header("Accept", "application/vnd.github+json")
                 .header("X-GitHub-Api-Version", "2022-11-28")
                 .max_body(4 * 1024 * 1024),
@@ -126,12 +168,12 @@ pub fn download_latest(client: &Client, dir: &Path) -> Result<(PathBuf, Release)
         .map_err(|e| failed(format!("cannot reach the GitHub API: {e}")))?;
     if !resp.is_success() {
         return Err(failed(format!(
-            "GitHub API returned HTTP {} for {RELEASES_URL}",
-            resp.status
+            "GitHub API returned HTTP {} for {}",
+            resp.status, source.release_url
         )));
     }
-    let release = parse_release(&String::from_utf8_lossy(&resp.body))?;
-    crate::output::info(format!("Downloading SideStore {}...", release.tag));
+    let release = parse_release_asset(&String::from_utf8_lossy(&resp.body), source.asset)?;
+    crate::output::info(format!("Downloading {} ({})...", source.name, release.tag));
 
     let resp = client
         .send(
@@ -139,16 +181,16 @@ pub fn download_latest(client: &Client, dir: &Path) -> Result<(PathBuf, Release)
                 .header("Accept", "application/octet-stream")
                 .max_body(MAX_IPA_BYTES),
         )
-        .map_err(|e| failed(format!("cannot download {ASSET_NAME}: {e}")))?;
+        .map_err(|e| failed(format!("cannot download {}: {e}", source.asset)))?;
     if !resp.is_success() {
         return Err(failed(format!(
-            "downloading {ASSET_NAME} returned HTTP {}",
-            resp.status
+            "downloading {} returned HTTP {}",
+            source.asset, resp.status
         )));
     }
     verify(&release, &resp.body)?;
 
-    let path = dir.join(ASSET_NAME);
+    let path = dir.join(source.asset);
     std::fs::write(&path, &resp.body)
         .map_err(|e| failed(format!("cannot write `{}`: {e}", path.display())))?;
     Ok((path, release))
@@ -211,6 +253,21 @@ mod tests {
         let bad_digest = r#"{"assets":[{"name":"SideStore.ipa","browser_download_url":"https://x","digest":"sha256:zz"}]}"#;
         assert!(parse_release(bad_digest).is_err());
         assert!(parse_release("not json").is_err());
+    }
+
+    #[test]
+    fn selects_the_sideload_app_asset() {
+        let body = r#"{"tag_name":"sideload-app","prerelease":true,"assets":[
+          {"name":"Sideload.ipa.sha256","browser_download_url":"https://x/1"},
+          {"name":"Sideload.ipa","size":3,"browser_download_url":"https://github.com/kt3k/sideload/releases/download/sideload-app/Sideload.ipa"}]}"#;
+        let r = parse_release_asset(body, SIDELOAD_APP.asset).unwrap();
+        assert_eq!(r.tag, SIDELOAD_APP_TAG);
+        assert_eq!(r.asset, "Sideload.ipa");
+        assert!(r.download_url.ends_with("/sideload-app/Sideload.ipa"));
+        assert!(SIDELOAD_APP.release_url.ends_with(SIDELOAD_APP_TAG));
+        let e = verify(&r, b"abcd").unwrap_err();
+        assert!(e.message.contains("Sideload.ipa"), "{}", e.message);
+        assert!(parse_release_asset(SAMPLE, SIDELOAD_APP.asset).is_err());
     }
 
     #[test]

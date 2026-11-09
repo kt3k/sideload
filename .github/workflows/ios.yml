@@ -1,7 +1,8 @@
 name: iOS app
 
-# Builds the Sideload iOS app (ios/SPEC.md) as an unsigned IPA. Sign and
-# install it with `sideload install Sideload.ipa`.
+# Builds the Sideload iOS app (ios/SPEC.md) as an unsigned IPA. On every push
+# to main the IPA is published to the `sideload-app` pre-release, where
+# `sideload install -l` downloads it (SPEC.md 7.8).
 on:
   push:
     paths:
@@ -81,3 +82,49 @@ jobs:
             Sideload.ipa
             Sideload.ipa.sha256
           if-no-files-found: error
+
+  # Rolling pre-release `sideload-app`: the tag is moved to the built commit
+  # and the assets are replaced. It is a pre-release and never "latest", so
+  # releases/latest (install.sh, Homebrew) keeps pointing at the CLI.
+  publish:
+    name: Publish to the sideload-app release
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-sideload-app
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: sideload-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: Sideload.ipa
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          sha256sum -c Sideload.ipa.sha256
+          version=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' ios/project.yml | head -n 1)
+          title="Sideload iOS app ${version}"
+          notes=$(printf '%s\n\n%s\n\n%s\n' \
+            "The Sideload iOS app (ios/SPEC.md) ${version}, built from ${GITHUB_SHA} on $(date -u +%Y-%m-%d)." \
+            "Install it with \`sideload install -l\` (signs it with your Apple ID and puts this computer's pairing file into it)." \
+            "This pre-release is replaced on every push to main. Not yet validated on a real device.")
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/$TAG" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+            gh release edit "$TAG" --title "$title" --notes "$notes" --prerelease --latest=false
+            gh release upload "$TAG" Sideload.ipa Sideload.ipa.sha256 --clobber
+          else
+            gh release create "$TAG" Sideload.ipa Sideload.ipa.sha256 \
+              --target "$GITHUB_SHA" --title "$title" --notes "$notes" \
+              --prerelease --latest=false
+          fi
+          gh release view "$TAG" --json tagName,isPrerelease,assets \
+            --jq '"\(.tagName) prerelease=\(.isPrerelease) assets=\([.assets[].name] | join(","))"'

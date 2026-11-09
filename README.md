@@ -72,6 +72,9 @@ sideload install MyApp.ipa
 # Install the latest SideStore release from GitHub (also sets up its pairing file)
 sideload install -s
 
+# Install the Sideload iOS app (refreshes apps on the device; see below)
+sideload install -l
+
 # Put the pairing file into an already installed SideStore again
 sideload sidestore pairing-file
 
@@ -103,9 +106,11 @@ Apps installed with a free account expire after 7 days. The **Sideload** iOS app
 computer, through a loopback VPN such as LocalDevVPN. Status: implemented, builds in CI;
 not yet validated on a real device.
 
-1. Download `Sideload.ipa` from a release (or the **iOS app** workflow's artifact) and install
-   it: `sideload install Sideload.ipa`. This also puts the computer's pairing file into the app
-   (rerun with `sideload sidestore pairing-file` if that step warned).
+1. Install it with `sideload install -l`. This downloads `Sideload.ipa` from the
+   [`sideload-app`](https://github.com/kt3k/sideload/releases/tag/sideload-app) pre-release
+   (rebuilt on every push to `main`), signs and installs it, and puts the computer's pairing
+   file into the app (rerun `sideload sidestore pairing-file` if that step warned).
+   `sideload install Sideload.ipa` does the same with a local copy.
 2. In the app: enter your Apple ID, password and an anisette server, turn the VPN on, and check
    the connection.
 3. Install IPAs with **+**, and refresh with **Refresh All**, or automatically with a Shortcuts

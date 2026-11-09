@@ -279,6 +279,7 @@ The executable name is Implementation-defined.
 
 <cli> install <ipa> [install options]     Install an IPA onto a device
 <cli> install -s [install options]        Install the latest SideStore release
+<cli> install -l [install options]        Install the latest Sideload iOS app
 
 # Diagnostics (Section 8)
 <cli> team list                           Check login and look up team IDs
@@ -290,7 +291,8 @@ The executable name is Implementation-defined.
 <cli> app-id delete <identifier>          Delete an App ID
 
 <cli> sidestore pairing-file [--udid <UDID>]
-                                          Put the pairing file into SideStore (Section 10.4)
+                                          Put the pairing file into SideStore or the Sideload
+                                          iOS app (Section 10.4)
 <cli> logout                              Remove the saved login session (Section 9.6)
 <cli> version                             Print the version
 ```
@@ -311,10 +313,12 @@ Global options come before the subcommand.
 
 ### 5.4 Install Options
 
-- `<ipa>`: The IPA to install. Must pass the validation in Section 5.6. Exactly one of `<ipa>`
-  and `--sidestore` MUST be given.
+- `<ipa>`: The IPA to install. Must pass the validation in Section 5.6. Exactly one of `<ipa>`,
+  `--sidestore`, and `--sideload-app` MUST be given.
 - `-s`, `--sidestore`: Download and install the latest SideStore release instead of `<ipa>`
   (Section 7.7).
+- `-l`, `--sideload-app`: Download and install the latest Sideload iOS app instead of `<ipa>`
+  (Section 7.8).
 - `--udid <UDID>`: Target device.
 - `--team <team_id>`: Team to use.
 - `-o`, `--output <path>`: Write the signed IPA instead of installing it.
@@ -429,8 +433,8 @@ output and error reports.
 
 1. `ValidatingArguments`: Validation from Section 5.6.
 2. `SelectingDevice`: Choose the target device using the rules in Section 10.1.
-3. `DownloadingApp`: Only with `--sidestore`: download the latest SideStore release into the
-   working directory (Section 7.7).
+3. `DownloadingApp`: Only with `--sidestore` or `--sideload-app`: download the release into the
+   working directory (Sections 7.7, 7.8).
 4. `PreparingBundle`: Extract the IPA into the working directory, apply `--strip-extensions`
    and `--name`, and check the extension bundle identifiers (Section 4.2).
 5. `PreparingAnisette`: Prepare the Anisette Provider.
@@ -520,7 +524,7 @@ With `--sidestore`, the tool installs the latest release of SideStore instead of
    the most recent non-prerelease, non-draft release.
 2. Select the asset whose `name` is exactly `SideStore.ipa`. If there is none, fail with
    `download_failed` and name the release tag.
-3. Print the release tag (for example `Downloading SideStore 0.6.1...`).
+3. Print the release tag (for example `Downloading SideStore (0.6.1)...`).
 4. Download the asset's `browser_download_url`, following HTTPS redirects only, into the working
    directory as `SideStore.ipa`. The download MUST fail with `download_failed` when:
    - the response is not successful;
@@ -539,6 +543,21 @@ With `--sidestore`, the tool installs the latest release of SideStore instead of
 The download is not cached; each run fetches the latest release again. In `DryRun` mode the
 download still happens (it changes nothing on the Apple side or on the device), so that the plan
 reflects the real bundle.
+
+### 7.8 `--sideload-app`: Latest Sideload iOS App
+
+With `--sideload-app`, the tool installs the Sideload iOS app ([ios/SPEC.md](ios/SPEC.md))
+instead of `<ipa>`. Section 7.7 applies with these differences:
+
+- The release is `GET https://api.github.com/repos/kt3k/sideload/releases/tags/sideload-app`
+  and the asset is `Sideload.ipa`. The repository's iOS app workflow publishes it: on every push
+  to `main` that changes the app or the code it is built from, it builds the IPA, moves the tag
+  `sideload-app` to that commit, and replaces the assets. The release is a pre-release and is
+  never marked latest, so `releases/latest` keeps naming the CLI release.
+- The progress line names the app and the tag (for example
+  `Downloading the Sideload app (sideload-app)...`).
+- The bundle identifier is `io.github.kt3k.sideload`, so after installation the pairing file is
+  set up as in Section 10.4, with the failure handling of Section 7.7 step 6.
 
 ## 8. Diagnostic Commands
 
@@ -842,7 +861,7 @@ The pairing file grants access to the device as this computer (Section 14.2).
 
 5. `Artifact Failures`
    - `signing_failed`
-   - `download_failed` (the `--sidestore` download in Section 7.7)
+   - `download_failed` (the `--sidestore` and `--sideload-app` downloads, Sections 7.7, 7.8)
 
 6. `Unexpected Failures`
    - `internal_error` (an implementation defect; details are printed with `--debug`)
@@ -931,8 +950,9 @@ the quota is insufficient.
 
 ### 14.4 Downloaded Applications
 
-- The `--sidestore` download (Section 7.7) MUST use only the fixed repository `SideStore/SideStore`
-  and HTTPS for every request, including redirects.
+- The `--sidestore` and `--sideload-app` downloads (Sections 7.7, 7.8) MUST use only their fixed
+  repositories (`SideStore/SideStore`, `kt3k/sideload`) and HTTPS for every request, including
+  redirects.
 - A published SHA-256 digest MUST be verified before the file is used.
 - The downloaded file is treated like a user-supplied IPA: the extraction rules of Section 14.3
   apply.
@@ -952,7 +972,9 @@ the quota is insufficient.
 function install(args):
   validate_arguments(args)                          # ValidatingArguments
   target = select_device(args.udid, args.mode)      # SelectingDevice
-  ipa = args.sidestore ? download_latest_sidestore() : args.ipa  # DownloadingApp
+  ipa = args.sidestore ? download_latest_sidestore()             # DownloadingApp
+      : args.sideload_app ? download_sideload_app()
+      : args.ipa
   bundle = prepare_bundle(ipa, args)                # PreparingBundle
 
   anisette = prepare_anisette(config)               # PreparingAnisette
@@ -1159,7 +1181,7 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
   `--bundle-id`, `--name`, `--new-cert`, `--keep-temp`)
 - App ID quota pre-check (no partial registration)
 - Per-App-ID profile retrieval and signing
-- `install --sidestore` (Section 7.7)
+- `install --sidestore` and `install --sideload-app` (Sections 7.7, 7.8)
 - The diagnostic commands in Section 8
 - The error codes in Section 13.1 and the exit codes
 - Secret handling and filesystem safety in Section 14
@@ -1213,7 +1235,8 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 11. The executable name is Implementation-defined (upstream uses `sideloader`; this repository's
     implementation uses `sideload`).
 12. Errors are reported with an error code and the phase name.
-13. `install --sidestore` downloads and installs the latest SideStore release from GitHub.
+13. `install --sidestore` downloads and installs the latest SideStore release from GitHub, and
+    `install --sideload-app` the Sideload iOS app.
 14. The configuration directory is named `Sideload` (upstream: `Sideloader`) and environment
     variables use the `SIDELOAD_` prefix. Upstream's directory is not read.
 15. Upstream writes the pairing file by re-sending the whole buffer after a partial AFC write,

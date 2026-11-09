@@ -196,7 +196,9 @@ profile's. The `self` record MUST NOT be removed by Section 7.5.
 
 ### 5.1 Prerequisites
 
-1. Install `<App>` with the CLI (`sideload install <App>.ipa`) or any other sideloading tool.
+1. Install `<App>` with the CLI (`sideload install -l` downloads and installs the reference
+   implementation, CLI 7.8; `sideload install <App>.ipa` installs a local copy) or any other
+   sideloading tool.
 2. Put the pairing file of a computer the device trusts into `<App>`. The CLI does this when it
    installs the reference implementation, and with `sideload sidestore pairing-file`
    (CLI 10.4): it writes the usbmuxd pair record, with `UDID` added, to `<App>`'s
@@ -452,8 +454,8 @@ It SHOULD keep the screen awake while an install or refresh started from the Use
 - `ios/Sideload/`: the User Interface, Secure Store, and Scheduler in Swift (SwiftUI, App Intents,
   BackgroundTasks, UserNotifications).
 - `ios/project.yml`: the Xcode project, generated with XcodeGen. The CI workflow
-  `.github/workflows/ios.yml` builds an unsigned `Sideload.ipa`, ready to be signed and installed
-  with `sideload install Sideload.ipa`.
+  `.github/workflows/ios.yml` builds an unsigned `Sideload.ipa` and, on pushes to `main`,
+  publishes it to the `sideload-app` pre-release, from which `sideload install -l` installs it.
 - Unattended refresh threshold: 2 days. Background task identifier:
   `io.github.kt3k.sideload.refresh`, fixed rather than derived from the bundle identifier,
   because sideloading tools rewrite `CFBundleIdentifier` but not

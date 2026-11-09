@@ -15,10 +15,12 @@ use crate::{Error, ErrorCode, Result};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InstallArgs {
-    /// `None` only with `sidestore`.
+    /// `None` only with `sidestore` or `sideload_app`.
     pub ipa: Option<PathBuf>,
     /// `-s`: install the latest SideStore release (SPEC Section 7.7).
     pub sidestore: bool,
+    /// `-l`: install the latest Sideload iOS app (SPEC Section 7.8).
+    pub sideload_app: bool,
     pub udid: Option<String>,
     pub team: Option<String>,
     pub output: Option<PathBuf>,
@@ -340,6 +342,7 @@ fn parse_install_args(p: &mut lexopt::Parser) -> Result<Command> {
             Long("team") => a.team = Some(string_value(p)?),
             Short('o') | Long("output") => a.output = Some(p.value().map_err(usage_error)?.into()),
             Short('s') | Long("sidestore") => a.sidestore = true,
+            Short('l') | Long("sideload-app") => a.sideload_app = true,
             Long("dry-run") => a.dry_run = true,
             Long("strip-extensions") => a.strip_extensions = true,
             Long("bundle-id") => a.bundle_id = Some(string_value(p)?),
@@ -351,10 +354,20 @@ fn parse_install_args(p: &mut lexopt::Parser) -> Result<Command> {
         }
     }
     a.ipa = ipa;
-    match (&a.ipa, a.sidestore) {
-        (Some(_), true) => return Err(invalid("<ipa> and --sidestore cannot be combined")),
-        (None, false) => return Err(invalid("missing argument <ipa> (or use --sidestore)")),
-        _ => {}
+    let sources =
+        usize::from(a.ipa.is_some()) + usize::from(a.sidestore) + usize::from(a.sideload_app);
+    match sources {
+        0 => {
+            return Err(invalid(
+                "missing argument <ipa> (or use --sidestore or --sideload-app)",
+            ));
+        }
+        1 => {}
+        _ => {
+            return Err(invalid(
+                "<ipa>, --sidestore and --sideload-app cannot be combined",
+            ));
+        }
     }
     if a.output.is_some() && a.dry_run {
         return Err(invalid("--output and --dry-run cannot be combined"));
@@ -371,6 +384,7 @@ Usage: sideload [global options] <command>
 Commands:
   install <ipa>              Install an IPA onto a device
   install -s                 Install the latest SideStore release
+  install -l                 Install the latest Sideload iOS app
 
   team list                  Check login and look up team IDs
   device list                Registered and connected devices
@@ -408,10 +422,14 @@ Install an IPA onto a device.
 Usage:
   sideload install <ipa> [options]
   sideload install -s [options]
+  sideload install -l [options]
 
 Options:
   -s, --sidestore          Download the latest SideStore release from GitHub
                            (SideStore/SideStore) and install it instead of <ipa>
+  -l, --sideload-app       Download the latest Sideload iOS app (kt3k/sideload,
+                           release `sideload-app`), install it instead of <ipa>
+                           and put this computer's pairing file into it
       --udid <UDID>        Target device
       --team <TEAM_ID>     Team to use (default: first team)
   -o, --output <PATH>      Write the signed IPA instead of installing it
@@ -653,6 +671,21 @@ mod tests {
             err_code(&["install", "a.ipa", "-s"]),
             ErrorCode::InvalidArguments
         );
+    }
+
+    #[test]
+    fn sideload_app_option() {
+        for flag in ["-l", "--sideload-app"] {
+            let Command::Install(a) = cmd(&["install", flag]) else {
+                panic!()
+            };
+            assert!(a.sideload_app);
+            assert!(!a.sidestore);
+            assert_eq!(a.ipa, None);
+        }
+        for bad in [&["install", "-l", "-s"][..], &["install", "a.ipa", "-l"]] {
+            assert_eq!(err_code(bad), ErrorCode::InvalidArguments, "{bad:?}");
+        }
     }
 
     #[test]

@@ -120,18 +120,26 @@ pub fn run(args: &InstallArgs, settings: &Settings) -> Result<ExitCode> {
         Phase::SelectingDevice,
     )?;
 
-    // Obtain the IPA (download for --sidestore, otherwise the argument).
-    let ipa = if args.sidestore {
+    // Obtain the IPA (download for --sidestore / --sideload-app, otherwise
+    // the argument).
+    let source = if args.sidestore {
+        Some(sidestore::SIDESTORE)
+    } else if args.sideload_app {
+        Some(sidestore::SIDELOAD_APP)
+    } else {
+        None
+    };
+    let ipa = if let Some(source) = source {
         output::phase(Phase::DownloadingApp);
         let client = sidestore::http_client().map_err(|e| e.with_phase(Phase::DownloadingApp))?;
-        sidestore::download_latest(&client, workdir.path())
+        sidestore::download(&client, workdir.path(), &source)
             .map_err(|e| e.with_phase(Phase::DownloadingApp))?
             .0
     } else {
         args.ipa.clone().ok_or_else(|| {
             Error::new(
                 ErrorCode::InvalidArguments,
-                "missing argument <ipa> (or use --sidestore)",
+                "missing argument <ipa> (or use --sidestore or --sideload-app)",
             )
             .with_phase(Phase::ValidatingArguments)
         })?
