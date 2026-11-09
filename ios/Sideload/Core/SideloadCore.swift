@@ -52,10 +52,13 @@ struct CoreResponse {
 private final class CallbackBox {
     let onLog: (LogLevel, String) -> Void
     let askCode: (() -> String?)?
+    let anisetteHeaders: (() -> String?)?
 
-    init(onLog: @escaping (LogLevel, String) -> Void, askCode: (() -> String?)?) {
+    init(onLog: @escaping (LogLevel, String) -> Void, askCode: (() -> String?)?,
+         anisetteHeaders: (() -> String?)?) {
         self.onLog = onLog
         self.askCode = askCode
+        self.anisetteHeaders = anisetteHeaders
     }
 }
 
@@ -64,12 +67,13 @@ enum SideloadCore {
     /// Runs one request synchronously. Call it off the main thread.
     static func callBlocking(_ request: [String: Any],
                              onLog: @escaping (LogLevel, String) -> Void,
-                             askCode: (() -> String?)?) -> CoreResponse {
+                             askCode: (() -> String?)?,
+                             anisetteHeaders: (() -> String?)? = nil) -> CoreResponse {
         guard let data = try? JSONSerialization.data(withJSONObject: request),
               let json = String(data: data, encoding: .utf8)
         else { return .failure("cannot encode the request") }
 
-        let box = CallbackBox(onLog: onLog, askCode: askCode)
+        let box = CallbackBox(onLog: onLog, askCode: askCode, anisetteHeaders: anisetteHeaders)
         let context = Unmanaged.passRetained(box).toOpaque()
         defer { Unmanaged<CallbackBox>.fromOpaque(context).release() }
 
@@ -85,6 +89,12 @@ enum SideloadCore {
                 let box = Unmanaged<CallbackBox>.fromOpaque(context).takeUnretainedValue()
                 guard let code = box.askCode?() else { return nil }
                 return strdup(code)
+            },
+            anisette_headers: { context in
+                guard let context else { return nil }
+                let box = Unmanaged<CallbackBox>.fromOpaque(context).takeUnretainedValue()
+                guard let headers = box.anisetteHeaders?() else { return nil }
+                return strdup(headers)
             }
         )
 
@@ -98,10 +108,12 @@ enum SideloadCore {
     /// Runs one request on a background queue.
     static func call(_ request: [String: Any],
                      onLog: @escaping (LogLevel, String) -> Void = { _, _ in },
-                     askCode: (() -> String?)? = nil) async -> CoreResponse {
+                     askCode: (() -> String?)? = nil,
+                     anisetteHeaders: (() -> String?)? = nil) async -> CoreResponse {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(returning: callBlocking(request, onLog: onLog, askCode: askCode))
+                continuation.resume(returning: callBlocking(request, onLog: onLog, askCode: askCode,
+                                                           anisetteHeaders: anisetteHeaders))
             }
         }
     }

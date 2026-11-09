@@ -19,7 +19,7 @@ extern "C" {
 #define SIDELOAD_LOG_PHASE 3
 
 typedef struct SideloadCallbacks {
-  // Passed back to both callbacks.
+  // Passed back to all callbacks.
   void *context;
   // Progress and log lines. May be called from any thread during the call.
   // May be NULL.
@@ -28,6 +28,11 @@ typedef struct SideloadCallbacks {
   // allocated with malloc (the core frees it), or NULL to cancel. May be NULL
   // (no interactive login possible).
   char *(*two_factor_code)(void *context);
+  // Fresh on-device Anisette headers: {"headers":{"X-Apple-I-MD":"...",...}}.
+  // Called synchronously on the worker thread, once per fresh header request.
+  // Return a malloc-allocated NUL-terminated UTF-8 string (core frees it), or
+  // NULL on failure. Never reenter sideload_call. May be NULL for remote mode.
+  char *(*anisette_headers)(void *context);
 } SideloadCallbacks;
 
 // Runs one request. Returns a NUL-terminated JSON response (never NULL);

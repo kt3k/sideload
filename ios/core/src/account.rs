@@ -1,4 +1,4 @@
-//! Logging in (`ios/SPEC.md` Section 7.2): remote Anisette, saved-session
+//! Logging in (`ios/SPEC.md` Section 7.2): remote or host-provided Anisette, saved-session
 //! reuse, password login with an interactive 2FA callback.
 
 use sideload::ErrorCode;
@@ -27,12 +27,9 @@ pub struct LoggedIn {
 }
 
 fn anisette(cfg: &Config) -> CResult<Box<dyn AnisetteProvider>> {
-    let url = cfg.anisette_server.as_deref().ok_or_else(|| {
-        CoreError::new(
-            ErrorCode::AnisetteUnavailable,
-            "no anisette server configured; set one in Settings",
-        )
-    })?;
+    let Some(url) = cfg.anisette_server.as_deref() else {
+        return Ok(Box::new(crate::anisette::OnDevice::new()?));
+    };
     validate_anisette_url(url)?;
     std::fs::create_dir_all(&cfg.data_dir).map_err(|e| {
         CoreError::new(
@@ -148,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn requires_anisette_server() {
+    fn requires_local_engine_or_valid_remote_server() {
         let dir = temp_dir("no-anisette");
         let cfg = Config {
             data_dir: dir,

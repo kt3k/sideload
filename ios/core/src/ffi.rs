@@ -8,7 +8,7 @@ use sideload::output::{self, Level};
 
 use crate::api;
 
-/// Callbacks supplied by the caller. Either may be null. `log` may be called
+/// Callbacks supplied by the caller. Each may be null. `log` may be called
 /// from any thread while `sideload_call` runs.
 #[repr(C)]
 pub struct SideloadCallbacks {
@@ -17,6 +17,8 @@ pub struct SideloadCallbacks {
     /// Returns a code (or `resend`) allocated with `malloc`, which the core
     /// frees; NULL cancels.
     pub two_factor_code: Option<extern "C" fn(context: *mut c_void) -> *mut c_char>,
+    /// Fresh on-device headers as malloc-allocated JSON; NULL means failure.
+    pub anisette_headers: Option<crate::anisette::HeadersCallback>,
 }
 
 /// Levels passed to `log`.
@@ -71,6 +73,8 @@ pub unsafe extern "C" fn sideload_call(
             .into_owned()
     };
     let guard = CALL.lock().unwrap_or_else(|p| p.into_inner());
+    let anisette_scope =
+        crate::anisette::Scope::enter(callbacks.context, callbacks.anisette_headers);
     if let Some(log) = callbacks.log {
         let target = Arc::new(LogTarget {
             context: callbacks.context,
@@ -102,6 +106,7 @@ pub unsafe extern "C" fn sideload_call(
             .to_owned()
     });
     output::set_sink(None);
+    drop(anisette_scope);
     drop(guard);
     c_string(&response).into_raw()
 }
@@ -139,6 +144,7 @@ mod tests {
             context: &log as *const _ as *mut c_void,
             log: Some(collect),
             two_factor_code: None,
+            anisette_headers: None,
         };
         let out = unsafe { sideload_call(req.as_ptr(), cb) };
         let text = unsafe { CStr::from_ptr(out) }
@@ -151,6 +157,7 @@ mod tests {
             context: std::ptr::null_mut(),
             log: None,
             two_factor_code: None,
+            anisette_headers: None,
         };
         let out = unsafe { sideload_call(std::ptr::null(), cb) };
         let text = unsafe { CStr::from_ptr(out) }

@@ -1,6 +1,6 @@
 # On-Device Refresher Specification
 
-Status: Draft v1 (language-agnostic)
+Status: Draft v2 (language-agnostic; on-device Anisette implementation in progress)
 
 Purpose: Define an iOS application that signs IPA files with a free or paid Apple developer
 account, installs them onto the same device it runs on, and keeps them working by refreshing
@@ -46,6 +46,7 @@ installed on the device.
 - Run refreshes without user interaction: from an automation the user sets up, and
   opportunistically in the background.
 - Warn the user before an app expires when no refresh succeeded.
+- Generate Anisette on the device without a third-party server (Section 4.4).
 - Reuse the CLI's protocol, signing, and bundle code; the behavior of every Apple-side operation
   is the CLI's.
 
@@ -56,7 +57,6 @@ installed on the device.
 - Pairing the device by itself. The pairing file is created on a computer (Section 5.1).
 - RemotePairing (the iOS 17+ CoreDevice tunnel) and RSD services. Only the lockdown protocol over
   TCP is used (Section 12).
-- Local Anisette on the device. Only a remote anisette-v3 server is supported (Section 4.4).
 - Managing apps it did not install, other than itself.
 - Installing onto any device other than the one it runs on.
 
@@ -77,7 +77,7 @@ installed on the device.
 ### 3.2 External Dependencies
 
 - Apple authentication servers and the Developer Services API (HTTPS), as in CLI 3.3.
-- An anisette-v3 compatible server (Section 4.4).
+- An on-device Anisette engine, or an explicitly configured anisette-v3 server (Section 4.4).
 - A loopback VPN app that routes a tunnel peer address back to the device itself, such as
   LocalDevVPN. `<App>` does not ship a VPN.
 - A pairing file created on a computer (Section 5.1).
@@ -107,7 +107,7 @@ Layout:
 
 - `keys/<key_id>/key.pem`: the signing key, as CLI 4.1.1 and CLI 4.2. This key is generated on
   the device and is distinct from any computer's key.
-- anisette state of the remote anisette-v3 client (CLI 9.1).
+- separate on-device and remote anisette-v3 state (Section 4.4).
 - `pairing.plist`: the pairing file (Section 4.3).
 - `apps.json`: the registry (Section 4.5).
 - `apps/<bundle_id>/app.ipa`: the original IPA of each managed app (Section 4.5).
@@ -144,10 +144,49 @@ plist with `HostCertificate`, `HostPrivateKey`, `HostID`, `SystemBUID`, and opti
 
 ### 4.4 Anisette
 
-Only the remote backend of CLI 9.1 is supported. `anisette_server` (an `http`/`https` URL,
-validated as in CLI 5.6) is REQUIRED for every operation that logs in; when it is missing, fail
-with `anisette_unavailable`. The User Interface MAY suggest a public server, but MUST show the
-user that it is a third party (CLI help text for `--anisette-server`).
+The target is on-device generation by default, with an explicit remote option. The project
+remains MIT-licensed: the interpreter MUST be implemented independently from the AArch64
+architecture and ELF ABI, without incorporating GPL/AGPL emulator code. AnisetteKit and Unicorn
+are not dependencies. The staged implementation and remaining work are tracked in
+[ANISETTE.md](ANISETTE.md) (on-device generation is not yet available in the app).
+
+Backend selection at the Core Interface is determined by `anisette_server`:
+
+- A non-empty URL explicitly selects the existing remote-v3 backend (CLI 9.1). Validate the
+  `http`/`https` URL as in CLI 5.6. Existing saved URLs retain this behavior.
+- Missing, null or empty selects the host's on-device header callback. If no engine callback is
+  installed, fail with `anisette_unavailable` in `PreparingAnisette` before asking for a password
+  or 2FA code. NEVER silently use a public server after a local failure.
+
+The on-device engine MUST interpret the Android AArch64 ADI libraries as guest data. It MUST
+NOT use JIT, host executable mappings, private Apple frameworks, a debugger entitlement, or a
+localhost HTTP server. Guest memory, imported functions and instruction execution MUST be
+bounded; unsupported instructions/imports MUST fail closed. Proprietary ADI libraries MUST NOT
+be bundled in the app; acquire them from Apple's official distribution when the user enables
+local generation. Download and provisioning may need a foreground run and network access to
+Apple; on-device generation does not mean offline provisioning.
+
+Local identity, provisioning blobs and libraries belong under a separate `data_dir/anisette-local`
+directory with the same protection and backup exclusions as Section 4.1. Do not reuse remote
+server state as local provisioning. Failed downloads or provisioning MUST NOT overwrite valid
+state. Resetting identity/provisioning requires an explicit user action.
+
+The host returns fresh headers synchronously through `anisette_headers` for each request on the
+core worker thread; it MUST NOT cache and reuse an OTP across header requests. The callback
+returns a malloc-allocated UTF-8 JSON object `{"headers":{...}}` or NULL on failure. The core
+frees it, accepts at most 64 KiB, and validates header names, values and required fields before
+use. The required fields are `X-Apple-I-MD`, `X-Apple-I-MD-M`, `X-Apple-I-MD-RINFO`,
+`X-Apple-I-MD-LU`, `X-Mme-Device-Id`, `X-Mme-Client-Info`, `X-Apple-I-Client-Time`,
+`X-Apple-I-TimeZone`, and `X-Apple-Locale`; optional fields are `User-Agent` and
+`X-Apple-I-SRL-NO`. Duplicate names (case-insensitive), unknown names, empty values, control
+characters and values above 8 KiB MUST be rejected. Callback context is valid only during the
+core call and MUST NOT be retained or used to reenter `sideload_call`.
+
+Passwords and 2FA codes MUST NOT be passed to the engine. OTPs, machine IDs, provisioning blobs
+and raw engine responses MUST NOT appear in logs or errors. Remote mode remains opt-in: the UI
+MUST label its server as a third party. Until the independent engine can provision and generate
+headers successfully, Settings MUST keep local mode unavailable rather than advertise a working
+serverless option. The existing remote configuration remains usable during implementation.
 
 ### 4.5 Managed App Record
 
@@ -205,7 +244,8 @@ profile's. The `self` record MUST NOT be removed by Section 7.5.
    `Documents/ALTPairingFile.mobiledevicepairing`. A pairing file made by another tool can be
    imported from Files or the share sheet instead.
 3. Install and turn on the loopback VPN.
-4. Enter the Apple ID, the password, and the anisette server in `<App>`.
+4. Enter the Apple ID and password in `<App>`, and select an available Anisette backend
+   (Section 4.4). During local engine development, configure a remote server explicitly.
 
 Before every operation that connects to the device, `<App>` imports
 `Documents/ALTPairingFile.mobiledevicepairing` if it exists (Section 4.3) and deletes it after a
@@ -246,7 +286,7 @@ The device's UDID is always taken from lockdownd, never only from the pairing fi
 
 CLI 9.2 to 9.4 with the account of Section 4.2:
 
-1. Prepare the remote Anisette provider (`PreparingAnisette`).
+1. Prepare the selected Anisette provider (`PreparingAnisette`, Section 4.4).
 2. If a session is given and usable, verify it with `list_teams()`; use it if that succeeds.
 3. Otherwise authenticate with `apple_id` and `password`; ask for a 2FA code through the Core
    Interface when Apple requires one.
@@ -414,7 +454,7 @@ The User Interface MUST provide:
 - the list of managed apps with name, version, and time left until `profile_expires`, with
   refresh and forget actions;
 - import of an IPA (file picker and "open in"), which starts an install;
-- settings: Apple ID, password, team (optional), anisette server, device host, pairing file
+- settings: Apple ID, password, team (optional), Anisette backend and remote server (optional), device host, pairing file
   import, connection check;
 - a 2FA code prompt with a way to request a new code;
 - the log of the last operation, with the error code and phase of a failure.
@@ -460,6 +500,10 @@ It SHOULD keep the screen awake while an install or refresh started from the Use
   `io.github.kt3k.sideload.refresh`, fixed rather than derived from the bundle identifier,
   because sideloading tools rewrite `CFBundleIdentifier` but not
   `BGTaskSchedulerPermittedIdentifiers`.
+- On-device Anisette is in development: the MIT interpreter foundation, scoped host callback
+  and basic guest ELF loader exist, but ADI execution, provisioning and the local Settings option
+  are not implemented.
+  The app still requires a remote server. See [ANISETTE.md](ANISETTE.md).
 - The anisette server has no default; the settings screen offers SideStore's public server
   (`https://ani.sidestore.io`) as a one-tap suggestion, labeled as a third party.
 - Build: `ios/build-core.sh` (static library, Cargo profile `ios`), then
@@ -475,6 +519,10 @@ Deterministic (unit tests with mocks):
 - Refresh selection with and without `within`; the profile certificate check; the choice between
   profile-only, re-sign, and failure.
 - Pairing import: valid file replaces, invalid file leaves the old one.
+- Anisette bridge: fresh callback per request, scope cleanup including unwinding, missing
+  callback, malformed/duplicate/injected headers, generic errors without OTP disclosure.
+- Interpreter: independently assembled AArch64 programs, register width and NZCV, call/return
+  and stack, memory permissions/bounds, instruction budget, unsupported opcode traps.
 - Core Interface: request parsing errors map to `invalid_arguments`; responses for success and
   failure; `version`, `apps`, and `forget` without network.
 
@@ -483,6 +531,9 @@ Real integration (RECOMMENDED before release):
 - Connection check with the VPN on and off.
 - Install of a small IPA, then a refresh that only installs profiles and extends the expiry.
 - A refresh from the Shortcuts automation while the device is locked.
+- Local Anisette: first-run acquisition, Apple provisioning, distinct OTPs on repeated requests,
+  real account login, relaunch with saved state, and locked-device refresh without a remote URL.
+  This validation is pending; interpreter unit tests alone do not establish ADI compatibility.
 
 ## 15. Definition of Done
 

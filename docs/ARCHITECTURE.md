@@ -31,7 +31,7 @@ organized and what it depends on.
 
 | Part | Location | Responsibility |
 |---|---|---|
-| Core (Rust, workspace member `sideload-ios-core`) | `ios/core/src` | `api` (JSON Core Interface), `ffi` (C ABI, `include/sideload_core.h`), `ops` (install / refresh / forget / list), `account` (remote anisette, session reuse, 2FA callback), `device` (lockdownd over TCP with a pairing file), `registry` (`apps.json`), `selfapp`, `profile` |
+| Core (Rust, workspace member `sideload-ios-core`) | `ios/core/src` | `api` (JSON Core Interface), `ffi` (C ABI, `include/sideload_core.h`), `ops` (install / refresh / forget / list), `account` (remote anisette or scoped host callback, session reuse, 2FA callback), `anisette` (header validation), `emulation` (independent AArch64 interpreter foundation), `device` (lockdownd over TCP with a pairing file), `registry` (`apps.json`), `selfapp`, `profile` |
 | App (Swift) | `ios/Sideload` | SwiftUI screens, Keychain, App Intent (Shortcuts), BackgroundTasks, notifications |
 | Project | `ios/project.yml`, `ios/build-core.sh` | XcodeGen project; static library build (Cargo profile `ios`, no LTO) |
 

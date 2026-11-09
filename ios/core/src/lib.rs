@@ -7,9 +7,11 @@
 //! - `registry`, `selfapp`, `profile`: the domain model (Section 4).
 
 pub mod account;
+mod anisette;
 pub mod api;
 pub mod config;
 pub mod device;
+pub mod emulation;
 pub mod error;
 pub mod ffi;
 pub mod ops;
