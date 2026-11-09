@@ -39,6 +39,8 @@ pub enum ErrorCode {
     DeviceNotPaired,
     DeviceTransportError,
     InstallFailed,
+    SidestoreNotInstalled,
+    PairingFileFailed,
     // Artifact Failures
     SigningFailed,
     DownloadFailed,
@@ -77,6 +79,8 @@ impl ErrorCode {
             DeviceNotPaired => "device_not_paired",
             DeviceTransportError => "device_transport_error",
             InstallFailed => "install_failed",
+            SidestoreNotInstalled => "sidestore_not_installed",
+            PairingFileFailed => "pairing_file_failed",
             SigningFailed => "signing_failed",
             DownloadFailed => "download_failed",
             InternalError => "internal_error",

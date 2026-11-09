@@ -68,8 +68,11 @@ cargo build --release
 # Install an IPA onto the connected device (prompts for Apple ID, password and 2FA code)
 sideload install MyApp.ipa
 
-# Install the latest SideStore release from GitHub
+# Install the latest SideStore release from GitHub (also sets up its pairing file)
 sideload install -s
+
+# Put the pairing file into an already installed SideStore again
+sideload sidestore pairing-file
 
 # Show what would be registered and signed, without changing anything
 sideload install MyApp.ipa --dry-run

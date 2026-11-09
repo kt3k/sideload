@@ -4,6 +4,7 @@ pub mod cert_identity;
 pub mod deliver;
 pub mod diagnostics;
 pub mod install;
+pub mod pairing_file;
 pub mod session;
 #[cfg(test)]
 mod test_support;
@@ -29,6 +30,7 @@ pub fn dispatch(command: Command, settings: &Settings) -> Result<ExitCode> {
         } => d::cert_revoke(settings, team, &serial_number),
         Command::AppIdList { team } => d::app_id_list(settings, team),
         Command::AppIdDelete { team, identifier } => d::app_id_delete(settings, team, &identifier),
+        Command::SidestorePairingFile { udid } => pairing_file::run(udid.as_deref()),
         Command::Logout => session::logout(),
         Command::Version => version::run(),
         Command::Help(text) => {

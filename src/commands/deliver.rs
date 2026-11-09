@@ -24,18 +24,22 @@ fn transport_err(msg: impl std::fmt::Display) -> Error {
 
 /// Reads the device's pairing record from usbmuxd.
 pub fn pairing_record(udid: &str) -> Result<PairingRecord> {
+    PairingRecord::parse(&pairing_record_bytes(udid)?)
+}
+
+/// The raw pairing record (a plist) usbmuxd keeps for `udid`.
+pub(crate) fn pairing_record_bytes(udid: &str) -> Result<Vec<u8>> {
     let mut mux = Usbmuxd::connect()?;
-    let bytes = mux.read_pair_record(udid)?.ok_or_else(|| {
+    mux.read_pair_record(udid)?.ok_or_else(|| {
         Error::new(
             ErrorCode::DeviceNotPaired,
             format!("device {udid} is not paired; trust this computer on the device"),
         )
-    })?;
-    PairingRecord::parse(&bytes)
+    })
 }
 
 /// Opens a lockdownd TLS session to `device_id`.
-fn open_lockdown(device_id: u32, pairing: &PairingRecord) -> Result<LockdownClient> {
+pub(crate) fn open_lockdown(device_id: u32, pairing: &PairingRecord) -> Result<LockdownClient> {
     let socket = Usbmuxd::connect()?.connect_to_device(device_id, lockdown::LOCKDOWND_PORT)?;
     let mut client = LockdownClient::new(socket);
     client.query_type()?;
@@ -45,7 +49,7 @@ fn open_lockdown(device_id: u32, pairing: &PairingRecord) -> Result<LockdownClie
 
 /// Starts `service` and opens a new device connection to it, wrapping it in
 /// TLS when the service requires it.
-fn open_service(
+pub(crate) fn open_service(
     lockdown: &mut LockdownClient,
     device_id: u32,
     service: &str,

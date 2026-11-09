@@ -32,6 +32,47 @@ impl<S: Read + Write> InstallationProxyClient<S> {
         InstallationProxyClient { stream }
     }
 
+    /// `Browse` for user apps: the bundle identifiers of every installed
+    /// user application.
+    pub fn browse_user_bundle_ids(&mut self) -> Result<Vec<String>> {
+        let options: Dictionary = [
+            ("ApplicationType", Value::from("User")),
+            (
+                "ReturnAttributes",
+                Value::Array(vec![Value::from("CFBundleIdentifier")]),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let req: Dictionary = [
+            ("Command", Value::from("Browse")),
+            ("ClientOptions", Value::Dictionary(options)),
+        ]
+        .into_iter()
+        .collect();
+        write_message(&mut self.stream, &req)?;
+        let mut ids = Vec::new();
+        loop {
+            let reply = read_message_raw(&mut self.stream)?;
+            if let Some(err) = reply.get("Error").and_then(Value::as_str) {
+                return Err(transport_err(format!("Browse failed: {err}")));
+            }
+            if let Some(list) = reply.get("CurrentList").and_then(Value::as_array) {
+                ids.extend(
+                    list.iter()
+                        .filter_map(|app| app.get("CFBundleIdentifier"))
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned),
+                );
+            }
+            match reply.get("Status").and_then(Value::as_str) {
+                Some("Complete") => return Ok(ids),
+                Some(_) => {}
+                None => return Err(transport_err("Browse reply has no Status")),
+            }
+        }
+    }
+
     /// Installs the app staged at `remote_path` (an AFC path under
     /// `PublicStaging`). `PackageType` is `Developer`. `progress` is called
     /// with the percentage and the current status string as the device
@@ -208,5 +249,31 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::InstallFailed);
         assert!(err.message.contains("APIInternalError"));
+    }
+
+    #[test]
+    fn browse_collects_bundle_ids_across_replies() {
+        let app = |id: &str| Value::Dictionary(reply(&[("CFBundleIdentifier", Value::from(id))]));
+        let replies = vec![
+            reply(&[
+                ("Status", Value::from("BrowsingApplications")),
+                (
+                    "CurrentList",
+                    Value::Array(vec![app("com.a"), app("com.SideStore.SideStore.T")]),
+                ),
+            ]),
+            reply(&[
+                ("Status", Value::from("BrowsingApplications")),
+                ("CurrentList", Value::Array(vec![app("com.b")])),
+            ]),
+            reply(&[("Status", Value::from("Complete"))]),
+        ];
+        let mut client = InstallationProxyClient::new(Mock::new(replies));
+        assert_eq!(
+            client.browse_user_bundle_ids().unwrap(),
+            ["com.a", "com.SideStore.SideStore.T", "com.b"]
+        );
+        let sent = read_message_raw(&mut Cursor::new(client.stream.written.clone())).unwrap();
+        assert_eq!(sent.get("Command").unwrap().as_str(), Some("Browse"));
     }
 }

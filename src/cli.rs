@@ -56,6 +56,9 @@ pub enum Command {
         team: Option<String>,
         identifier: String,
     },
+    SidestorePairingFile {
+        udid: Option<String>,
+    },
     Logout,
     Version,
     Help(&'static str),
@@ -216,6 +219,26 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Invocation> {
             }
             Sub::Name(s) => return Err(unknown_sub("app-id", &s)),
         },
+        "sidestore" => match subcommand(&mut p, "sidestore", help::SIDESTORE)? {
+            Sub::Help(h) => Command::Help(h),
+            Sub::Name(s) if s == "pairing-file" => {
+                let mut udid = None;
+                let mut help = false;
+                while let Some(arg) = p.next().map_err(usage_error)? {
+                    match arg {
+                        Short('h') | Long("help") => help = true,
+                        Long("udid") => udid = Some(string_value(&mut p)?),
+                        other => return Err(usage_error(other.unexpected())),
+                    }
+                }
+                if help {
+                    Command::Help(help::SIDESTORE)
+                } else {
+                    Command::SidestorePairingFile { udid }
+                }
+            }
+            Sub::Name(s) => return Err(unknown_sub("sidestore", &s)),
+        },
         "version" => no_more_args(&mut p, help::TOP)?.unwrap_or(Command::Version),
         "logout" => no_more_args(&mut p, help::TOP)?.unwrap_or(Command::Logout),
         other => {
@@ -357,6 +380,7 @@ Commands:
   app-id list                List App IDs and remaining quota
   app-id delete <id>         Delete an App ID
 
+  sidestore pairing-file     Put the pairing file into an installed SideStore
   logout                     Remove the saved login session (macOS)
   version                    Print the version
 
@@ -402,6 +426,17 @@ Options:
 
     pub const TEAM: &str = "\
 Usage: sideload team list
+";
+
+    pub const SIDESTORE: &str = "\
+Usage:
+  sideload sidestore pairing-file [--udid <UDID>]
+
+Writes this computer's pairing file into every installed SideStore
+(Documents/ALTPairingFile.mobiledevicepairing) and enables Wi-Fi
+connections, so SideStore can refresh apps without this computer.
+`install -s` does this automatically. Anyone with the pairing file can
+access the device as this computer.
 ";
 
     pub const DEVICE: &str = "\
@@ -563,6 +598,16 @@ mod tests {
         );
         assert_eq!(cmd(&["version"]), Command::Version);
         assert_eq!(cmd(&["logout"]), Command::Logout);
+        assert_eq!(
+            cmd(&["sidestore", "pairing-file"]),
+            Command::SidestorePairingFile { udid: None }
+        );
+        assert_eq!(
+            cmd(&["sidestore", "pairing-file", "--udid", "U"]),
+            Command::SidestorePairingFile {
+                udid: Some("U".into())
+            }
+        );
     }
 
     #[test]

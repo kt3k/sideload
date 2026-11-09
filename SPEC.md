@@ -57,8 +57,9 @@ Important boundary:
 
 ### 2.2 Non-Goals
 
-- Upstream commands not needed for installation, such as `sign` (standalone signing),
-  `trollsign`, and `tool` (SideStore pairing file).
+- Upstream commands not needed for installation, such as `sign` (standalone signing) and
+  `trollsign`. Upstream's `tool` (SideStore pairing file) is replaced by `sidestore pairing-file`
+  (Section 10.4).
 - Persisting credentials (the password is never stored). Saving the login session is limited to
   the OS keyring as described in Section 9.6.
 - Fully unattended login including 2FA. The user always enters the 2FA code.
@@ -288,6 +289,8 @@ The executable name is Implementation-defined.
 <cli> app-id list                         List App IDs and remaining quota
 <cli> app-id delete <identifier>          Delete an App ID
 
+<cli> sidestore pairing-file [--udid <UDID>]
+                                          Put the pairing file into SideStore (Section 10.4)
 <cli> logout                              Remove the saved login session (Section 9.6)
 <cli> version                             Print the version
 ```
@@ -529,6 +532,9 @@ With `--sidestore`, the tool installs the latest release of SideStore instead of
    `--debug`.
 5. Continue with `PreparingBundle` on the downloaded file. Because the bundle identifier is
    `com.SideStore.SideStore`, Section 11.1 applies (`ALTAppGroups`).
+6. In `Install` mode, after installation_proxy reports completion (still in `Delivering`), set up
+   the pairing file as in Section 10.4. A failure there MUST NOT fail the install: print a warning
+   that names `sidestore pairing-file` and continue.
 
 The download is not cached; each run fetches the latest release again. In `DryRun` mode the
 download still happens (it changes nothing on the Apple side or on the device), so that the plan
@@ -722,6 +728,28 @@ on other hosts.
 If lockdown cannot be reached because the device is not paired or is locked, the tool SHOULD fail
 with `device_not_paired` and tell the user to choose "Trust This Computer" on the device.
 
+### 10.4 SideStore Pairing File
+
+SideStore refreshes apps on the device by itself, acting as this computer. It needs this
+computer's pairing record. `sidestore pairing-file` (and `install --sidestore`, Section 7.7):
+
+1. Select the device as in Section 10.1 for `Install` mode (it must be connected).
+2. Read the pairing record from usbmuxd (missing: `device_not_paired`) and start a lockdown
+   session with it.
+3. List user apps through installation_proxy `Browse` (`ApplicationType = User`). The SideStore
+   bundles are those whose `CFBundleIdentifier` starts with `com.SideStore.SideStore` (`install
+   --sidestore` appends the team ID). If there is none, fail with `sidestore_not_installed`.
+4. Set `EnableWifiDebugging = true` in lockdown domain `com.apple.mobile.wireless_lockdown`.
+5. The pairing file is the pairing record (a plist) with the key `UDID` set to the device's UDID,
+   written as an XML plist.
+6. For each SideStore bundle, start `com.apple.mobile.house_arrest`, send `VendContainer` with
+   the bundle identifier, and over the resulting AFC session write the pairing file to
+   `/Documents/ALTPairingFile.mobiledevicepairing` (replacing an existing one). A
+   `VendContainer` error fails with `pairing_file_failed`, naming the bundle.
+7. Print the bundles the file was written for.
+
+The pairing file grants access to the device as this computer (Section 14.2).
+
 ## 11. Bundle Processing and Signing Contract
 
 ### 11.1 Bundle Processing
@@ -804,6 +832,8 @@ with `device_not_paired` and tell the user to choose "Trust This Computer" on th
    - `device_not_paired`
    - `device_transport_error`
    - `install_failed`
+   - `sidestore_not_installed` (Section 10.4)
+   - `pairing_file_failed` (Section 10.4)
 
 5. `Artifact Failures`
    - `signing_failed`
@@ -880,6 +910,8 @@ the quota is insufficient.
   logged (with `--debug`).
 - Passing the password through an environment variable may expose it to other processes of the
   same user. The help text is RECOMMENDED to say so.
+- The SideStore pairing file (Section 10.4) contains the host private key of the pairing. It
+  MUST be written only to the device and MUST NOT be logged.
 - The password MUST NOT be accepted as a CLI option, because it would be visible in the process
   list.
 
@@ -1147,7 +1179,7 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 |---|---|
 | `sign` | Performed inside `install`. Standalone use requires having the certificate locally, which makes it unsuitable for diagnostics. Replaced by `install --output` |
 | `trollsign` | Unrelated to installation (for TrollStore) |
-| `tool list` / `tool run` | Unrelated to installation (for SideStore pairing files) |
+| `tool list` / `tool run` | Replaced by `sidestore pairing-file`, also run by `install --sidestore` (Section 10.4) |
 | `cert submit` | Done automatically by `install` |
 | `app-id add` / `app-id download` | Done automatically by `install` |
 | `device add` | Done automatically by `install` |
@@ -1179,3 +1211,6 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 13. `install --sidestore` downloads and installs the latest SideStore release from GitHub.
 14. The configuration directory is named `Sideload` (upstream: `Sideloader`) and environment
     variables use the `SIDELOAD_` prefix. Upstream's directory is not read.
+15. Upstream writes the pairing file by re-sending the whole buffer after a partial AFC write,
+    which corrupts it; here it is written in bounded chunks. Wi-Fi connections are enabled before
+    writing, as upstream does.

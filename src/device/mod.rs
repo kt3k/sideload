@@ -6,12 +6,14 @@
 //!   StartService.
 //! - `afc`, `installation_proxy`, `misagent`: services used by delivery
 //!   (SPEC Section 10.3).
+//! - `house_arrest`: AFC into an app's container (SPEC Section 10.4).
 //!
 //! - `pairing`: parse usbmuxd pairing records.
 //!
 //! Reference: idevice (MIT).
 
 pub mod afc;
+pub mod house_arrest;
 pub mod installation_proxy;
 pub mod lockdown;
 pub mod misagent;

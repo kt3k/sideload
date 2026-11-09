@@ -261,6 +261,17 @@ pub fn run(args: &InstallArgs, settings: &Settings) -> Result<ExitCode> {
                 }),
                 Phase::Delivering,
             )?;
+            // SPEC 10.4: SideStore needs the pairing file. The app is
+            // installed either way, so a failure here only warns.
+            if args.sidestore {
+                match crate::commands::pairing_file::set_up(device_id, &t.udid) {
+                    Ok(_) => output::info("Set up the SideStore pairing file."),
+                    Err(e) => output::warn(format!(
+                        "could not set up the SideStore pairing file ({e}); \
+                         open SideStore once, then run `sideload sidestore pairing-file`"
+                    )),
+                }
+            }
         }
         Mode::DryRun => unreachable!("handled above"),
     }

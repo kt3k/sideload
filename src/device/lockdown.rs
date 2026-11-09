@@ -258,6 +258,17 @@ impl LockdownClient {
             .ok_or_else(|| transport_err(format!("GetValue({key}) reply has no Value")))
     }
 
+    /// `SetValue` in `domain` (requires a session).
+    pub fn set_value(&mut self, domain: &str, key: &str, value: Value) -> Result<()> {
+        self.transact(&request([
+            ("Request", Value::from("SetValue")),
+            ("Domain", Value::from(domain)),
+            ("Key", Value::from(key)),
+            ("Value", value),
+        ]))?;
+        Ok(())
+    }
+
     pub fn device_name(&mut self) -> Result<String> {
         match self.get_value("DeviceName")? {
             Value::String(s) => Ok(s),
