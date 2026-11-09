@@ -77,7 +77,7 @@ enum SideloadCore {
         let context = Unmanaged.passRetained(box).toOpaque()
         defer { Unmanaged<CallbackBox>.fromOpaque(context).release() }
 
-        let callbacks = SideloadCallbacks(
+        var callbacks = SideloadCallbacks(
             context: context,
             log: { context, level, message in
                 guard let context, let message else { return }
@@ -90,13 +90,16 @@ enum SideloadCore {
                 guard let code = box.askCode?() else { return nil }
                 return strdup(code)
             },
-            anisette_headers: { context in
+            anisette_headers: nil
+        )
+        if anisetteHeaders != nil {
+            callbacks.anisette_headers = { context in
                 guard let context else { return nil }
                 let box = Unmanaged<CallbackBox>.fromOpaque(context).takeUnretainedValue()
                 guard let headers = box.anisetteHeaders?() else { return nil }
                 return strdup(headers)
             }
-        )
+        }
 
         guard let raw = json.withCString({ sideload_call($0, callbacks) }) else {
             return .failure("the core returned nothing")
