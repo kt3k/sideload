@@ -7,6 +7,11 @@ description = "Sideload iOS apps onto a device with a free or paid Apple develop
 repository = "https://github.com/kt3k/sideload"
 license = "MIT"
 
+# ios/core is the on-device app's core (ios/SPEC.md); the CLI is the default
+# member, so plain `cargo build` / `cargo install` only build the CLI.
+[workspace]
+members = [".", "ios/core"]
+
 # Dependency budget: see docs/ARCHITECTURE.md. Add a crate only when the
 # module that needs it is implemented, and keep the transitive count small.
 [dependencies]
@@ -26,3 +31,11 @@ webpki-roots = "1"
 lto = true
 codegen-units = 1
 strip = true
+
+# The iOS core (ios/core) as a static library for Xcode: without LTO the
+# archive holds machine code that Apple's linker can read (with LTO it holds
+# LLVM bitcode from rustc's LLVM, which Xcode's linker may not understand).
+[profile.ios]
+inherits = "release"
+lto = false
+strip = false

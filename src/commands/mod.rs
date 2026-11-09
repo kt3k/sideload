@@ -4,6 +4,7 @@ pub mod cert_identity;
 pub mod deliver;
 pub mod diagnostics;
 pub mod install;
+pub mod pairing_file;
 pub mod session;
 #[cfg(test)]
 mod test_support;
@@ -22,6 +23,7 @@ pub fn dispatch(command: Command, settings: &Settings) -> Result<ExitCode> {
         Command::TeamList => d::team_list(settings),
         Command::DeviceList { team, udid } => d::device_list(settings, team, udid),
         Command::DeviceDelete { team, device_id } => d::device_delete(settings, team, &device_id),
+        Command::DevicePairingFile { udid, output } => pairing_file::run(udid, output),
         Command::CertList { team } => d::cert_list(settings, team),
         Command::CertRevoke {
             team,

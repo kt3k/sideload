@@ -422,7 +422,7 @@ fn provision_app_ids<T: Transport>(
 
 /// Registers the missing App IDs, then re-lists them to get each one's
 /// `appIdId` and features. Also returns the main App ID's name.
-fn register_app_ids<T: Transport>(
+pub fn register_app_ids<T: Transport>(
     dev: &mut Developer<T>,
     team_id: &str,
     needed: &[(String, String)],
@@ -462,7 +462,7 @@ fn find_app_id<'a>(app_ids: &'a [developer::AppId], identifier: &str) -> &'a dev
 
 /// Enables App Groups on every App ID, creates or reuses the App Group,
 /// and assigns it to each App ID.
-fn configure_app_group<T: Transport>(
+pub fn configure_app_group<T: Transport>(
     dev: &mut Developer<T>,
     team_id: &str,
     needed: &[(String, String)],
@@ -511,7 +511,7 @@ fn configure_app_group<T: Transport>(
 
 /// Downloads each App ID's own provisioning profile (SPEC Section 7; a fix
 /// over upstream, which reused the main profile everywhere).
-fn fetch_profiles<T: Transport>(
+pub fn fetch_profiles<T: Transport>(
     dev: &mut Developer<T>,
     team_id: &str,
     needed: &[(String, String)],

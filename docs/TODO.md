@@ -14,6 +14,10 @@ Checked items have implementation and mock coverage; live validation is noted ex
 
 ## In progress here
 
+- [ ] iOS app ([ios/SPEC.md](../ios/SPEC.md)): core, Swift UI, Shortcuts action, background
+  refresh and CI build are implemented; install / refresh on a real device over LocalDevVPN
+  is unverified (ios/SPEC.md Section 14, real integration).
+
 
 ## Done
 

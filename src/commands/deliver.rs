@@ -8,6 +8,7 @@
 use std::path::Path;
 
 use crate::device::afc::AfcClient;
+use crate::device::connect::{Connector, Usbmux};
 use crate::device::installation_proxy::{self, InstallationProxyClient};
 use crate::device::lockdown::{self, DeviceStream, LockdownClient};
 use crate::device::misagent::{self, MisagentClient};
@@ -34,9 +35,9 @@ pub fn pairing_record(udid: &str) -> Result<PairingRecord> {
     PairingRecord::parse(&bytes)
 }
 
-/// Opens a lockdownd TLS session to `device_id`.
-fn open_lockdown(device_id: u32, pairing: &PairingRecord) -> Result<LockdownClient> {
-    let socket = Usbmuxd::connect()?.connect_to_device(device_id, lockdown::LOCKDOWND_PORT)?;
+/// Opens a lockdownd TLS session through `conn`.
+pub fn open_lockdown(conn: &dyn Connector, pairing: &PairingRecord) -> Result<LockdownClient> {
+    let socket = conn.connect(lockdown::LOCKDOWND_PORT)?;
     let mut client = LockdownClient::new(socket);
     client.query_type()?;
     client.start_session(pairing)?;
@@ -47,12 +48,12 @@ fn open_lockdown(device_id: u32, pairing: &PairingRecord) -> Result<LockdownClie
 /// TLS when the service requires it.
 fn open_service(
     lockdown: &mut LockdownClient,
-    device_id: u32,
+    conn: &dyn Connector,
     service: &str,
     escrow_bag: Option<&[u8]>,
 ) -> Result<DeviceStream> {
     let info = lockdown.start_service(service, escrow_bag)?;
-    let socket = Usbmuxd::connect()?.connect_to_device(device_id, info.port)?;
+    let socket = conn.connect(info.port)?;
     if info.ssl {
         let config = lockdown
             .service_tls_config()
@@ -97,20 +98,32 @@ fn upload_tree<S: std::io::Read + std::io::Write>(
     Ok(())
 }
 
-/// Delivers `app_dir` (a signed `.app`) to the device, installing `profiles`
-/// first. `progress` receives installation_proxy progress.
+/// Delivers `app_dir` (a signed `.app`) to the usbmuxd device `device_id`,
+/// installing `profiles` first. `progress` receives installation_proxy
+/// progress.
 pub fn deliver(
     device_id: u32,
     udid: &str,
     app_dir: &Path,
     profiles: &[Vec<u8>],
-    mut progress: impl FnMut(u64, &str),
+    progress: impl FnMut(u64, &str),
 ) -> Result<()> {
     let pairing = pairing_record(udid)?;
-    let mut lockdown = open_lockdown(device_id, &pairing)?;
+    deliver_with(&Usbmux { device_id }, &pairing, app_dir, profiles, progress)
+}
+
+/// `deliver` through any connector (SPEC Section 10.3).
+pub fn deliver_with(
+    conn: &dyn Connector,
+    pairing: &PairingRecord,
+    app_dir: &Path,
+    profiles: &[Vec<u8>],
+    mut progress: impl FnMut(u64, &str),
+) -> Result<()> {
+    let mut lockdown = open_lockdown(conn, pairing)?;
 
     // Upload the signed bundle to PublicStaging.
-    let afc_stream = open_service(&mut lockdown, device_id, AFC_SERVICE, None)?;
+    let afc_stream = open_service(&mut lockdown, conn, AFC_SERVICE, None)?;
     let mut afc = AfcClient::new(afc_stream);
     let app_name = app_dir
         .file_name()
@@ -125,15 +138,35 @@ pub fn deliver(
 
     // Install the provisioning profiles. Like upstream, misagent is started
     // without the escrow bag (that is only for services used while locked).
-    let misagent_stream = open_service(&mut lockdown, device_id, misagent::SERVICE, None)?;
+    install_profiles_on(&mut lockdown, conn, profiles)?;
+
+    // Install the staged app.
+    let ip_stream = open_service(&mut lockdown, conn, installation_proxy::SERVICE, None)?;
+    let mut installer = InstallationProxyClient::new(ip_stream);
+    installer.install(&remote_app, |p, s| progress(p, s))?;
+    Ok(())
+}
+
+/// Installs provisioning profiles through misagent without touching the
+/// app (`ios/SPEC.md` Section 7.4, profile-only refresh).
+pub fn install_profiles(
+    conn: &dyn Connector,
+    pairing: &PairingRecord,
+    profiles: &[Vec<u8>],
+) -> Result<()> {
+    let mut lockdown = open_lockdown(conn, pairing)?;
+    install_profiles_on(&mut lockdown, conn, profiles)
+}
+
+fn install_profiles_on(
+    lockdown: &mut LockdownClient,
+    conn: &dyn Connector,
+    profiles: &[Vec<u8>],
+) -> Result<()> {
+    let misagent_stream = open_service(lockdown, conn, misagent::SERVICE, None)?;
     let mut misagent = MisagentClient::new(misagent_stream);
     for profile in profiles {
         misagent.install(profile)?;
     }
-
-    // Install the staged app.
-    let ip_stream = open_service(&mut lockdown, device_id, installation_proxy::SERVICE, None)?;
-    let mut installer = InstallationProxyClient::new(ip_stream);
-    installer.install(&remote_app, |p, s| progress(p, s))?;
     Ok(())
 }

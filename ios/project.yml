@@ -1,0 +1,36 @@
+# XcodeGen project (https://github.com/yonaskolb/XcodeGen).
+#   ios/build-core.sh            # builds ios/build/lib/libsideload_ios_core.a
+#   (cd ios && xcodegen generate)
+#   open ios/Sideload.xcodeproj
+name: Sideload
+options:
+  bundleIdPrefix: io.github.kt3k
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  Sideload:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sideload
+    settings:
+      base:
+        PRODUCT_NAME: Sideload
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.kt3k.sideload
+        INFOPLIST_FILE: Sideload/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_OBJC_BRIDGING_HEADER: Sideload/Sideload-Bridging-Header.h
+        HEADER_SEARCH_PATHS: $(PROJECT_DIR)/core/include
+        LIBRARY_SEARCH_PATHS: $(PROJECT_DIR)/build/lib
+        OTHER_LDFLAGS: -lsideload_ios_core
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # The Rust core is built for devices only.
+        SUPPORTED_PLATFORMS: iphoneos
+        ENABLE_BITCODE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""

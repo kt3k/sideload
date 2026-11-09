@@ -42,6 +42,10 @@ pub enum Command {
         team: Option<String>,
         device_id: String,
     },
+    DevicePairingFile {
+        udid: Option<String>,
+        output: Option<PathBuf>,
+    },
     CertList {
         team: Option<String>,
     },
@@ -181,6 +185,26 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Invocation> {
                 match team_and_positional(&mut p, help::DEVICE, "<device_id>")? {
                     Ok((team, device_id)) => Command::DeviceDelete { team, device_id },
                     Err(h) => Command::Help(h),
+                }
+            }
+            Sub::Name(s) if s == "pairing-file" => {
+                let mut udid = None;
+                let mut output = None;
+                let mut help = false;
+                while let Some(arg) = p.next().map_err(usage_error)? {
+                    match arg {
+                        Short('h') | Long("help") => help = true,
+                        Long("udid") => udid = Some(string_value(&mut p)?),
+                        Short('o') | Long("output") => {
+                            output = Some(p.value().map_err(usage_error)?.into())
+                        }
+                        other => return Err(usage_error(other.unexpected())),
+                    }
+                }
+                if help {
+                    Command::Help(help::DEVICE)
+                } else {
+                    Command::DevicePairingFile { udid, output }
                 }
             }
             Sub::Name(s) => return Err(unknown_sub("device", &s)),
@@ -352,6 +376,7 @@ Commands:
   team list                  Check login and look up team IDs
   device list                Registered and connected devices
   device delete <device_id>  Unregister a device
+  device pairing-file        Export a pairing file for the Sideload iOS app
   cert list                  List development certificates
   cert revoke <serial>       Revoke a development certificate
   app-id list                List App IDs and remaining quota
@@ -408,8 +433,13 @@ Usage: sideload team list
 Usage:
   sideload device list [--team <TEAM_ID>] [--udid <UDID>]
   sideload device delete [--team <TEAM_ID>] <device_id>
+  sideload device pairing-file [--udid <UDID>] [-o <PATH>]
 
 <device_id> is the identifier shown by `device list`, not the UDID.
+
+`pairing-file` writes the device's pairing record (default:
+<UDID>.mobiledevicepairing) for the Sideload iOS app. It does not log in.
+The file grants full access to the device; keep it private.
 ";
 
     pub const CERT: &str = "\
@@ -563,6 +593,20 @@ mod tests {
         );
         assert_eq!(cmd(&["version"]), Command::Version);
         assert_eq!(cmd(&["logout"]), Command::Logout);
+        assert_eq!(
+            cmd(&["device", "pairing-file"]),
+            Command::DevicePairingFile {
+                udid: None,
+                output: None
+            }
+        );
+        assert_eq!(
+            cmd(&["device", "pairing-file", "--udid", "U", "-o", "p.plist"]),
+            Command::DevicePairingFile {
+                udid: Some("U".into()),
+                output: Some("p.plist".into())
+            }
+        );
     }
 
     #[test]

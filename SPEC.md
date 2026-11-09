@@ -58,7 +58,8 @@ Important boundary:
 ### 2.2 Non-Goals
 
 - Upstream commands not needed for installation, such as `sign` (standalone signing),
-  `trollsign`, and `tool` (SideStore pairing file).
+  `trollsign`, and `tool` (SideStore pairing file). `device pairing-file` (Section 8.9) covers
+  the pairing file needed by the on-device app.
 - Persisting credentials (the password is never stored). Saving the login session is limited to
   the OS keyring as described in Section 9.6.
 - Fully unattended login including 2FA. The user always enters the 2FA code.
@@ -283,6 +284,8 @@ The executable name is Implementation-defined.
 <cli> team list                           Check login and look up team IDs
 <cli> device list [--udid <UDID>]         Registered and connected devices
 <cli> device delete <device_id>           Unregister a device
+<cli> device pairing-file [--udid <UDID>] [-o <path>]
+                                          Export a pairing file (Section 8.9)
 <cli> cert list                           List development certificates
 <cli> cert revoke <serial_number>         Revoke a development certificate
 <cli> app-id list                         List App IDs and remaining quota
@@ -597,6 +600,20 @@ You have <available> App IDs available out of the <max> you have at your disposa
 ### 8.8 `version`
 
 Prints the version string. Performs neither login nor device communication.
+
+### 8.9 `device pairing-file [--udid <UDID>] [-o <path>]`
+
+Writes a pairing file for the on-device app ([ios/SPEC.md](ios/SPEC.md) Section 5.1). It does
+not log in.
+
+- The device is selected as in Section 10.1 for `Install` mode, except that with `--udid` the
+  device need not be connected (usbmuxd keeps the pair record).
+- Reads the device's pair record from usbmuxd (`ReadPairRecord`). If there is none, fail with
+  `device_not_paired`. The record MUST parse as a pairing record (Section 10).
+- Writes the record as an XML plist with `UDID` set to the device's UDID, to `<path>` or by
+  default `./<UDID>.mobiledevicepairing`, through a temporary file and with owner-only
+  permissions. Write failures fail with `output_write_failed`.
+- Prints a warning that the file grants full access to the device.
 
 ## 9. Apple Account Integration Contract
 
@@ -1147,7 +1164,7 @@ Unless otherwise noted, Sections 16.1 through 16.6 are `Core Conformance`.
 |---|---|
 | `sign` | Performed inside `install`. Standalone use requires having the certificate locally, which makes it unsuitable for diagnostics. Replaced by `install --output` |
 | `trollsign` | Unrelated to installation (for TrollStore) |
-| `tool list` / `tool run` | Unrelated to installation (for SideStore pairing files) |
+| `tool list` / `tool run` | Unrelated to installation (for SideStore pairing files). `device pairing-file` exports a pairing file instead |
 | `cert submit` | Done automatically by `install` |
 | `app-id add` / `app-id download` | Done automatically by `install` |
 | `device add` | Done automatically by `install` |

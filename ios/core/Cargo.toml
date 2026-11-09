@@ -1,0 +1,16 @@
+[package]
+name = "sideload-ios-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Core of the Sideload iOS app (ios/SPEC.md): install and refresh on the device itself"
+license = "MIT"
+publish = false
+
+[lib]
+# staticlib for the Xcode app; lib for tests.
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+sideload = { path = "../.." }
+libc = "0.2"

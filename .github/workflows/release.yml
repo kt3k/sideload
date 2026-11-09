@@ -80,3 +80,27 @@ jobs:
             ${{ steps.package.outputs.asset }}
             ${{ steps.package.outputs.asset }}.sha256
           fail_on_unmatched_files: true
+
+  ios:
+    name: Build Sideload.ipa
+    uses: ./.github/workflows/ios.yml
+    with:
+      ref: ${{ github.event.inputs.tag || github.ref }}
+
+  ios-upload:
+    name: Upload Sideload.ipa
+    needs: ios
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Sideload.ipa
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            Sideload.ipa
+            Sideload.ipa.sha256
+          fail_on_unmatched_files: true
