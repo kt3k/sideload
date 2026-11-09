@@ -148,7 +148,7 @@ The target is on-device generation by default, with an explicit remote option. T
 remains MIT-licensed: the interpreter MUST be implemented independently from the AArch64
 architecture and ELF ABI, without incorporating GPL/AGPL emulator code. AnisetteKit and Unicorn
 are not dependencies. The staged implementation and remaining work are tracked in
-[ANISETTE.md](ANISETTE.md) (on-device generation is not yet available in the app).
+[ANISETTE.md](ANISETTE.md) (experimental local mode; live validation pending).
 
 Backend selection at the Core Interface is explicit when `anisette_mode` is supplied:
 
@@ -196,7 +196,8 @@ core call and MUST NOT be retained or used to reenter `sideload_call`.
 
 Passwords and 2FA codes MUST NOT be passed to the engine. OTPs, machine IDs, provisioning blobs
 and raw engine responses MUST NOT appear in logs or errors. Remote mode remains opt-in: the UI
-MUST label its server as a third party. The UI MUST label local mode as experimental during validation. `Check Anisette` calls
+MUST label its server as a third party. The UI MUST label local mode as experimental during
+validation. `Check Anisette` calls
 `prepare_anisette` without credentials and reports success only after headers are actually
 generated. The existing remote configuration remains usable during implementation.
 

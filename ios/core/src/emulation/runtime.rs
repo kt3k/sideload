@@ -273,13 +273,15 @@ impl Runtime {
         };
         cpu.x[..arguments.len()].copy_from_slice(arguments);
         cpu.x[30] = RETURN;
+        let mut steps = 0u32;
         while cpu.pc != RETURN {
-            if *budget == 0 || (*budget & 4095 == 0 && Instant::now() >= deadline) {
+            if *budget == 0 || (steps & 1023 == 0 && Instant::now() >= deadline) {
                 return Err(RuntimeError {
                     fault: Fault::BudgetExhausted,
                     pc: cpu.pc,
                 });
             }
+            steps = steps.wrapping_add(1);
             *budget -= 1;
             let result = if let Some(name) = self.traps.get(&cpu.pc).cloned() {
                 self.dispatch(&name, &mut cpu, budget, depth, deadline)
