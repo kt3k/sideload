@@ -50,6 +50,8 @@ jobs:
           cargo test -p sideload-ios-core --profile ios --test interpreted_adi
           official_libraries_initialize_and_reject_invalid_spim -- --ignored --nocapture
       - name: Provision, generate and rotate OTP, then reuse saved state
+        env:
+          SIDELOAD_GUEST_FS_TRACE: "1"
         run: >-
           cargo test -p sideload-ios-core --profile ios --test interpreted_adi
           live_provisioning_rotation_and_persisted_provider -- --ignored --nocapture
