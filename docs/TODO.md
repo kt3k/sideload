@@ -17,6 +17,10 @@ Checked items have implementation and mock coverage; live validation is noted ex
 - [ ] iOS app ([ios/SPEC.md](../ios/SPEC.md)): core, Swift UI, Shortcuts action, background
   refresh and CI build are implemented; install / refresh on a real device over LocalDevVPN
   is unverified (ios/SPEC.md Section 14, real integration).
+- [ ] iOS app: on-device Anisette without a server (currently a non-goal, ios/SPEC.md 2.2 and
+  4.4; the app needs a remote anisette-v3 server). SideStore does this with AnisetteKit, which
+  runs the ADI libraries on the device under an emulator. Needs a decision before any work,
+  and a spec update.
 
 
 ## Done
