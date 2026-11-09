@@ -21,8 +21,25 @@ organized and what it depends on.
 | | `device::{usbmuxd, lockdown, afc, installation_proxy, misagent}` | Device communication (SPEC 10) |
 | Artifact | `bundle` | IPA extraction, bundle rewriting (SPEC 11.1) |
 | | `sign` | Mach-O code signing (SPEC 11.2, implemented; see SIGNING.md) |
+| | `device::connect` | How a device port is reached: usbmuxd, or TCP (the iOS app's loopback VPN) |
 | Building blocks | `formats::{plist, zip, der, json, base64, date}` | In-tree format code (implemented) |
 | | `crypto::{cbc, srp, rsa_keygen}` | Protocol crypto on vetted primitives |
+
+## iOS app
+
+`ios/` holds the Sideload iOS app ([ios/SPEC.md](../ios/SPEC.md)):
+
+| Part | Location | Responsibility |
+|---|---|---|
+| Core (Rust, workspace member `sideload-ios-core`) | `ios/core/src` | `api` (JSON Core Interface), `ffi` (C ABI, `include/sideload_core.h`), `ops` (install / refresh / forget / list), `account` (remote anisette, session reuse, 2FA callback), `device` (lockdownd over TCP with a pairing file), `registry` (`apps.json`), `selfapp`, `profile` |
+| App (Swift) | `ios/Sideload` | SwiftUI screens, Keychain, App Intent (Shortcuts), BackgroundTasks, notifications |
+| Project | `ios/project.yml`, `ios/build-core.sh` | XcodeGen project; static library build (Cargo profile `ios`, no LTO) |
+
+The core reuses the CLI's modules unchanged where possible: the install phases
+(`commands::install::{register_app_ids, configure_app_group, fetch_profiles}`), signing,
+`commands::deliver::{deliver_with, install_profiles}` over `device::connect::Tcp`, and
+`output::set_sink` to forward log lines to the app. It adds no crates (only `libc`, already a
+dependency).
 
 ## Dependency policy
 

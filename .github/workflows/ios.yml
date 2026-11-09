@@ -1,0 +1,83 @@
+name: iOS app
+
+# Builds the Sideload iOS app (ios/SPEC.md) as an unsigned IPA. Sign and
+# install it with `sideload install Sideload.ipa`.
+on:
+  push:
+    paths:
+      - "ios/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ios.yml"
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}-${{ inputs.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build Sideload.ipa
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios
+
+      - name: Test the core
+        run: cargo test -p sideload-ios-core
+
+      - name: Build the core
+        run: ios/build-core.sh
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Build the app
+        run: |
+          xcodebuild -project ios/Sideload.xcodeproj -target Sideload \
+            -configuration Release -sdk iphoneos \
+            SYMROOT="$PWD/ios/build/xcode" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          rm -rf ios/build/ipa && mkdir -p ios/build/ipa/Payload
+          cp -R ios/build/xcode/Release-iphoneos/Sideload.app ios/build/ipa/Payload/
+          (cd ios/build/ipa && zip -qry ../../../Sideload.ipa Payload)
+          shasum -a 256 Sideload.ipa > Sideload.ipa.sha256
+          unzip -l Sideload.ipa | tail -n 3
+          plutil -p ios/build/ipa/Payload/Sideload.app/Info.plist | grep -E 'CFBundle(Identifier|ShortVersionString|Executable)'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sideload.ipa
+          path: |
+            Sideload.ipa
+            Sideload.ipa.sha256
+          if-no-files-found: error

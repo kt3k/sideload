@@ -736,9 +736,11 @@ computer's pairing record. `sidestore pairing-file` (and `install --sidestore`, 
 1. Select the device as in Section 10.1 for `Install` mode (it must be connected).
 2. Read the pairing record from usbmuxd (missing: `device_not_paired`) and start a lockdown
    session with it.
-3. List user apps through installation_proxy `Browse` (`ApplicationType = User`). The SideStore
+3. List user apps through installation_proxy `Browse` (`ApplicationType = User`). The target
    bundles are those whose `CFBundleIdentifier` starts with `com.SideStore.SideStore` (`install
-   --sidestore` appends the team ID). If there is none, fail with `sidestore_not_installed`.
+   --sidestore` appends the team ID) or with the Sideload iOS app's original identifier
+   `io.github.kt3k.sideload` ([ios/SPEC.md](ios/SPEC.md) Section 5.1). If there is none, fail
+   with `sidestore_not_installed`.
 4. Set `EnableWifiDebugging = true` in lockdown domain `com.apple.mobile.wireless_lockdown`.
 5. The pairing file is the pairing record (a plist) with the key `UDID` set to the device's UDID,
    written as an XML plist.
@@ -747,6 +749,9 @@ computer's pairing record. `sidestore pairing-file` (and `install --sidestore`, 
    `/Documents/ALTPairingFile.mobiledevicepairing` (replacing an existing one). A
    `VendContainer` error fails with `pairing_file_failed`, naming the bundle.
 7. Print the bundles the file was written for.
+
+`install` also does this, with the failure handling of Section 7.7 step 6, when the installed
+bundle's original identifier is `io.github.kt3k.sideload`.
 
 The pairing file grants access to the device as this computer (Section 14.2).
 

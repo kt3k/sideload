@@ -58,7 +58,8 @@ fn expiry_secs(expiry: u64) -> u64 {
     }
 }
 
-fn usable(session: &Session, now_secs: u64) -> bool {
+/// Whether `session` stays valid at least 10 more minutes after `now_secs`.
+pub fn usable(session: &Session, now_secs: u64) -> bool {
     session
         .expiry
         .is_some_and(|e| expiry_secs(e) > now_secs.saturating_add(MIN_REMAINING_SECS))
@@ -71,7 +72,8 @@ pub fn expires_at(session: &Session) -> Option<u64> {
 
 const FORMAT_VERSION: i64 = 1;
 
-fn encode(session: &Session) -> Vec<u8> {
+/// Serializes a session (a secret: store it only in a secure store).
+pub fn encode(session: &Session) -> Vec<u8> {
     let mut d = Dictionary::new();
     d.insert("version", FORMAT_VERSION);
     d.insert("adsid", session.adsid.as_str());
@@ -82,7 +84,8 @@ fn encode(session: &Session) -> Vec<u8> {
     Value::Dictionary(d).to_xml()
 }
 
-fn decode(bytes: &[u8]) -> Option<Session> {
+/// Parses `encode` output; `None` if it is not a saved session.
+pub fn decode(bytes: &[u8]) -> Option<Session> {
     let v = plist::from_bytes(bytes).ok()?;
     if v.get("version").and_then(Value::as_i64) != Some(FORMAT_VERSION) {
         return None;

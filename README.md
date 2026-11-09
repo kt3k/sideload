@@ -14,6 +14,7 @@ works on macOS (0.1.4). Installing onto a real device remains unverified. See
 [docs/TODO.md](docs/TODO.md).
 
 - [SPEC.md](SPEC.md): behavior specification
+- [ios/SPEC.md](ios/SPEC.md): the Sideload iOS app (install and refresh on the device itself)
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): module map, dependency policy, reference sources
 - [docs/TODO.md](docs/TODO.md): what remains
 - [docs/SIGNING.md](docs/SIGNING.md), [docs/REMOTE_ANISETTE.md](docs/REMOTE_ANISETTE.md), [docs/LOCAL_ADI.md](docs/LOCAL_ADI.md): subsystem notes
@@ -95,6 +96,29 @@ so later commands skip the password and 2FA until Apple's token expires. `sidelo
 removes it, and `SIDELOAD_NO_KEYCHAIN=1` disables saving. After upgrading sideload, macOS may
 ask whether the new binary may use the saved item ("Always Allow" keeps it working).
 
+### Refreshing on the device: the Sideload iOS app
+
+Apps installed with a free account expire after 7 days. The **Sideload** iOS app
+([ios/SPEC.md](ios/SPEC.md)) installs IPAs and refreshes them on the device itself, without a
+computer, through a loopback VPN such as LocalDevVPN. Status: implemented, builds in CI;
+not yet validated on a real device.
+
+1. Download `Sideload.ipa` from a release (or the **iOS app** workflow's artifact) and install
+   it: `sideload install Sideload.ipa`. This also puts the computer's pairing file into the app
+   (rerun with `sideload sidestore pairing-file` if that step warned).
+2. In the app: enter your Apple ID, password and an anisette server, turn the VPN on, and check
+   the connection.
+3. Install IPAs with **+**, and refresh with **Refresh All**, or automatically with a Shortcuts
+   personal automation running the app's **Refresh Apps** action.
+
+To build the app yourself (macOS with Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen)):
+
+```sh
+rustup target add aarch64-apple-ios
+ios/build-core.sh
+(cd ios && xcodegen generate) && open ios/Sideload.xcodeproj
+```
+
 ### Anisette
 
 Apple login needs anisette data. Local generation uses Apple's Android ADI libraries on Linux
@@ -114,7 +138,7 @@ you trust.
 
 Bump `version` in `Cargo.toml`, push to `main`, then run the **Tag release** workflow
 (Actions tab, input e.g. `v0.1.2`). It tags `main`, creates the GitHub Release and dispatches
-`release.yml`, which attaches the binaries. Then update the Homebrew formula
+`release.yml`, which attaches the binaries and `Sideload.ipa`. Then update the Homebrew formula
 (see [packaging/homebrew/README.md](packaging/homebrew/README.md)).
 
 ## License

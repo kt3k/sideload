@@ -9,10 +9,12 @@
 //! - `house_arrest`: AFC into an app's container (SPEC Section 10.4).
 //!
 //! - `pairing`: parse usbmuxd pairing records.
+//! - `connect`: reach a device port through usbmuxd or over TCP.
 //!
 //! Reference: idevice (MIT).
 
 pub mod afc;
+pub mod connect;
 pub mod house_arrest;
 pub mod installation_proxy;
 pub mod lockdown;

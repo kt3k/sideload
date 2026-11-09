@@ -380,7 +380,7 @@ Commands:
   app-id list                List App IDs and remaining quota
   app-id delete <id>         Delete an App ID
 
-  sidestore pairing-file     Put the pairing file into an installed SideStore
+  sidestore pairing-file     Put the pairing file into SideStore / the Sideload app
   logout                     Remove the saved login session (macOS)
   version                    Print the version
 
@@ -432,11 +432,11 @@ Usage: sideload team list
 Usage:
   sideload sidestore pairing-file [--udid <UDID>]
 
-Writes this computer's pairing file into every installed SideStore
-(Documents/ALTPairingFile.mobiledevicepairing) and enables Wi-Fi
-connections, so SideStore can refresh apps without this computer.
-`install -s` does this automatically. Anyone with the pairing file can
-access the device as this computer.
+Writes this computer's pairing file into every installed SideStore and
+Sideload iOS app (Documents/ALTPairingFile.mobiledevicepairing) and
+enables Wi-Fi connections, so the app can refresh apps without this
+computer. `install -s` and installing Sideload.ipa do this automatically.
+Anyone with the pairing file can access the device as this computer.
 ";
 
     pub const DEVICE: &str = "\

@@ -197,13 +197,17 @@ profile's. The `self` record MUST NOT be removed by Section 7.5.
 ### 5.1 Prerequisites
 
 1. Install `<App>` with the CLI (`sideload install <App>.ipa`) or any other sideloading tool.
-2. Create the pairing file on a computer the device trusts. The CLI provides
-   `sideload device pairing-file` (CLI 8.9), which writes the usbmuxd pair record with `UDID`
-   added.
-3. Copy the pairing file to the device and import it into `<App>` (Files, share sheet, or the
-   app's document folder).
-4. Install and turn on the loopback VPN.
-5. Enter the Apple ID, the password, and the anisette server in `<App>`.
+2. Put the pairing file of a computer the device trusts into `<App>`. The CLI does this when it
+   installs the reference implementation, and with `sideload sidestore pairing-file`
+   (CLI 10.4): it writes the usbmuxd pair record, with `UDID` added, to `<App>`'s
+   `Documents/ALTPairingFile.mobiledevicepairing`. A pairing file made by another tool can be
+   imported from Files or the share sheet instead.
+3. Install and turn on the loopback VPN.
+4. Enter the Apple ID, the password, and the anisette server in `<App>`.
+
+Before every operation that connects to the device, `<App>` imports
+`Documents/ALTPairingFile.mobiledevicepairing` if it exists (Section 4.3) and deletes it after a
+successful import, so a newer file from the computer takes effect without user action.
 
 ### 5.2 Setup Checks
 
