@@ -1,0 +1,59 @@
+name: Live interpreted Anisette
+
+# Opt-in Apple provisioning using a synthetic identity, without Apple ID/password.
+# The dedicated verification branch enables this user-requested live run. Main
+# pushes do not provision machines; later checks can be started manually.
+on:
+  workflow_dispatch:
+  push:
+    branches: [verify-ios-anisette]
+    paths:
+      - "ios/core/**"
+      - "src/anisette/local_adi/**"
+      - ".github/workflows/live-interpreted-anisette.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-interpreted-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live:
+    name: AArch64 ADI interpreted on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: live-interpreted
+      - name: Acquire official AArch64 libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/applemusic.apk" \
+            https://apps.mzstatic.com/content/android-apple-music-apk/applemusic.apk
+          python3 - "$RUNNER_TEMP/applemusic.apk" "$RUNNER_TEMP/adi-aarch64" <<'PY'
+          import os, sys, zipfile
+          os.makedirs(sys.argv[2], mode=0o700, exist_ok=True)
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              for name in ("libCoreADI.so", "libstoreservicescore.so"):
+                  with open(os.path.join(sys.argv[2], name), "wb") as out:
+                      out.write(z.read(f"lib/arm64-v8a/{name}"))
+          PY
+          echo "SIDELOAD_AARCH64_ADI_LIBRARY_DIR=$RUNNER_TEMP/adi-aarch64" >> "$GITHUB_ENV"
+      - name: Initialize ADI and reject malformed input
+        run: >-
+          cargo test -p sideload-ios-core --profile ios --test interpreted_adi
+          official_libraries_initialize_and_reject_invalid_spim -- --ignored --nocapture
+      - name: Provision, generate and rotate OTP, then reuse saved state
+        run: >-
+          cargo test -p sideload-ios-core --profile ios --test interpreted_adi
+          live_provisioning_rotation_and_persisted_provider -- --ignored --nocapture

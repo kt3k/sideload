@@ -20,8 +20,9 @@ Checked items have implementation and mock coverage; live validation is noted ex
 - [ ] iOS app: on-device Anisette without a server ([implementation status](../ios/ANISETTE.md)).
   MIT interpreter with scalar/integer SIMD, guest ELF linking, bounded Android runtime,
   interpreted provisioning Engine and experimental Settings mode are implemented. Official
-  AArch64 ADI initialization/query and invalid SPIM rejection pass under interpretation.
-  Pending: successful Apple provisioning and OTP rotation, then real iOS login/install/refresh.
+  AArch64 ADI initialization, Apple provisioning, OTP rotation, saved-state reuse and the
+  credential-free Core API pass live under interpretation on Linux x86_64 and macOS Apple Silicon.
+  Pending: real iOS login/install/refresh and locked-device/background validation.
   Remote remains the default; local mode never silently falls back to a server.
 
 

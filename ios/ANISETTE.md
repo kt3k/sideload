@@ -7,8 +7,10 @@ JIT or private Apple framework dependency. References are the
 [AArch64 ELF ABI](https://github.com/ARM-software/abi-aa/blob/main/aaelf64/aaelf64.rst).
 No external emulator implementation or proprietary ADI binary is included in the repository.
 
-**Experimental: official-library initialization works; successful Apple provisioning and OTP
-generation/rotation are not yet verified. Real iOS account login and refresh are unverified.**
+**Experimental: Apple provisioning, Anisette header generation, OTP rotation, saved-state
+reopening and the credential-free Core API pass live under interpretation on Linux x86_64
+and macOS Apple Silicon.
+Real iOS account login and refresh remain unverified.**
 Settings exposes `On Device (Experimental)` explicitly. Remote Server remains the default.
 `Check Anisette` reports success only when the selected backend actually generates headers.
 
@@ -75,11 +77,42 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 zig cc -target aarch64-linux-gnu -c ios/core/tests/fixtures/aarch64-extended.S -o /tmp/aarch64.o
 SIDELOAD_AARCH64_ADI_LIBRARY_DIR=/path/to/official/arm64-v8a \
-  cargo test -p sideload-ios-core --test interpreted_adi -- --ignored
+  cargo test -p sideload-ios-core --test interpreted_adi \
+  official_libraries_initialize_and_reject_invalid_spim -- --ignored
 cargo run -p sideload-ios-core --example adi_probe -- /path/to/official/arm64-v8a
 ```
 
-## Pending live validation
+## Live validation
+
+The opt-in [Live interpreted Anisette workflow](../.github/workflows/live-interpreted-anisette.yml)
+provisions a fresh synthetic identity and exercises the actual `LocalAnisette` provider. Main
+pushes do not trigger this network test; it runs manually or on the dedicated verification
+branch. It requires no Apple ID/password and never uploads generated state or header values.
+
+On 2026-11-09, the [Linux x86_64 run](https://github.com/kt3k/sideload/actions/runs/42626305687)
+passed first provisioning with Apple, required non-empty/base64 headers, repeated requests,
+provider reopening from committed state with the same machine identity, OTP rotation after
+35 seconds, and `prepare_anisette` without credentials or a usable remote server URL.
+The [cross-platform run](https://github.com/kt3k/sideload/actions/runs/42626727790) then passed
+the same complete test on both Linux x86_64 and macOS Apple Silicon (`aarch64-apple-darwin`).
+
+The first live run exposed ADI filesystem error `-45054`: the interpreter rejected Android's
+`O_LARGEFILE` flag. ADI writes with flags `0x8041` and reads with `0x8000`. The runtime now
+accepts the guest flag as a no-op for its 64-bit file API, without passing Android flags to the
+host OS. The unit file-I/O regression includes the flag; the subsequent live run passed.
+
+Optional `SIDELOAD_GUEST_FS_TRACE=1` logs only static file operation names, open flags and
+return statuses, never guest paths or buffer/header contents. It is disabled by default.
+
+Reproduce the full live test explicitly:
+
+```sh
+SIDELOAD_AARCH64_ADI_LIBRARY_DIR=/path/to/official/arm64-v8a \
+  cargo test -p sideload-ios-core --profile ios --test interpreted_adi \
+  live_provisioning_rotation_and_persisted_provider -- --ignored --nocapture
+```
+
+## Remaining device validation
 
 The opt-in developer probe below contacts Apple's provisioning API using a newly generated
 local identity; it requires no Apple ID/password and does not log header values or blobs:
@@ -89,12 +122,10 @@ cargo run -p sideload-ios-core --release --example anisette_live -- \
   /path/to/official/arm64-v8a /path/to/private/test-state
 ```
 
-A synthetic ELF or successful initialization is not proof of valid Anisette generation. Before
-promoting local mode, verify successful provisioning, non-empty headers, repeated OTP requests
-and rotation after a time window, and reuse of saved state after reopening the engine. Extend
-instruction/import coverage with independent fixtures if these paths trap. Then verify on an
-ordinary iOS device without JIT/debug entitlements: first acquisition, real account login, IPA
-install/refresh, relaunch, Shortcuts while locked, interrupted setup and offline retry.
+Host live tests establish provisioning/OTP behavior, not real iOS account acceptance or
+background execution. Before promoting local mode, verify on an ordinary iOS device without
+JIT/debug entitlements: first acquisition, real account login, IPA install/refresh, relaunch,
+Shortcuts while locked, interrupted setup and offline retry.
 
 Crash recovery for abandoned staging directories and multi-file transactional checkpoints are
 not implemented; files are committed atomically individually. Do not describe this backend as

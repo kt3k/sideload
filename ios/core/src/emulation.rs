@@ -1,5 +1,6 @@
 //! MIT AArch64 interpreter for on-device ADI. Unknown instructions trap.
-//! Official-library initialization works; complete provisioning is under validation.
+//! Live Apple provisioning and OTP rotation pass on host interpreters.
+//! Real iOS device operation remains under validation.
 //! Guest bytes are ordinary Rust data, never host executable memory.
 
 use std::ops::Range;

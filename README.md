@@ -113,8 +113,8 @@ not yet validated on a real device.
    `sideload install Sideload.ipa` does the same with a local copy.
 2. In the app: enter your Apple ID, password and an anisette server, turn the VPN on, and check
    the connection. Settings also offers **On Device (Experimental)** and **Check Anisette**
-   without account credentials. Official ADI initialization passes under the independent MIT
-   interpreter; successful Apple provisioning/OTP generation and real-device operation remain
+   without account credentials. Apple provisioning, OTP rotation and saved-state reuse pass live
+   under the independent MIT interpreter on Linux x86_64 and macOS Apple Silicon; iOS device operation remains
    unverified ([status](ios/ANISETTE.md)). Remote Server remains the default.
 3. Install IPAs with **+**, and refresh with **Refresh All**, or automatically with a Shortcuts
    personal automation running the app's **Refresh Apps** action.

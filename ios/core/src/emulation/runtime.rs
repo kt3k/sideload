@@ -52,6 +52,7 @@ pub struct Runtime {
     allocated: BTreeMap<u64, usize>,
     storage: Option<PathBuf>,
     files: BTreeMap<u32, GuestFile>,
+    trace_files: bool,
 }
 impl Runtime {
     pub fn new(core: &[u8], store: &[u8]) -> RuntimeResult<Self> {
@@ -93,6 +94,7 @@ impl Runtime {
             allocated: BTreeMap::new(),
             storage: None,
             files: BTreeMap::new(),
+            trace_files: std::env::var_os("SIDELOAD_GUEST_FS_TRACE").is_some(),
         })
     }
     /// Existing private directory. Guest file names resolve under virtual /adi.
@@ -284,11 +286,37 @@ impl Runtime {
             steps = steps.wrapping_add(1);
             *budget -= 1;
             let result = if let Some(name) = self.traps.get(&cpu.pc).cloned() {
-                self.dispatch(&name, &mut cpu, budget, depth, deadline)
-                    .map(|value| {
-                        cpu.x[0] = value;
-                        cpu.pc = cpu.x[30];
-                    })
+                let result = self.dispatch(&name, &mut cpu, budget, depth, deadline);
+                // Explicit developer diagnostics: only static operation names,
+                // flags and return status, never paths or guest buffer contents.
+                if self.trace_files
+                    && matches!(
+                        name.as_str(),
+                        "open"
+                            | "close"
+                            | "read"
+                            | "write"
+                            | "lstat"
+                            | "fstat"
+                            | "stat"
+                            | "chmod"
+                            | "mkdir"
+                            | "ftruncate"
+                    )
+                {
+                    match &result {
+                        Ok(value) if name == "open" => eprintln!(
+                            "guest fs: open flags={:#x} result={}",
+                            cpu.x[1], *value as i64
+                        ),
+                        Ok(value) => eprintln!("guest fs: {name} result={}", *value as i64),
+                        Err(e) => eprintln!("guest fs: {name} fault={:?}", e.fault),
+                    }
+                }
+                result.map(|value| {
+                    cpu.x[0] = value;
+                    cpu.pc = cpu.x[30];
+                })
             } else {
                 cpu.step(&mut self.memory).map_err(RuntimeError::from)
             };
@@ -338,7 +366,11 @@ impl Runtime {
         }
         Ok(match name {
             "open" => {
-                if b & !(3 | 0x40 | 0x80 | 0x200 | 0x400 | 0x80000 | 0x20000) != 0 || b & 3 == 3 {
+                // O_LARGEFILE is meaningful in the Android ABI even on a host
+                // whose native 64-bit libc defines that flag as zero.
+                if b & !(3 | 0x40 | 0x80 | 0x200 | 0x400 | 0x8000 | 0x80000 | 0x20000) != 0
+                    || b & 3 == 3
+                {
                     return self.errno(22);
                 }
                 let Some(path) = self.path(a)? else {
@@ -763,7 +795,7 @@ mod tests {
         rt.set_storage(&path).unwrap();
         let filename = rt.c_string("/adi/adi.pb").unwrap();
         let bytes = rt.buffer(b"test provisioning state").unwrap();
-        let fd = invoke(&mut rt, "open", &[filename, 2 | 0x40, 0o666]).unwrap();
+        let fd = invoke(&mut rt, "open", &[filename, 2 | 0x40 | 0x8000, 0o666]).unwrap();
         assert!((3..35).contains(&fd));
         assert_eq!(invoke(&mut rt, "write", &[fd, bytes, 23]).unwrap(), 23);
         let output = rt.allocate(128).unwrap();

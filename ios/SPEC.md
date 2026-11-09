@@ -518,9 +518,10 @@ It SHOULD keep the screen awake while an install or refresh started from the Use
   `BGTaskSchedulerPermittedIdentifiers`.
 - On-device Anisette is experimental: scalar/integer SIMD instructions, guest ELF linking,
   Android runtime shims, interpreted `Engine`, provisioning staging and Settings integration
-  are implemented. Official-library initialization, the unprovisioned query and invalid-input
-  rejection pass on a Linux x86_64 host interpreting AArch64. Successful Apple provisioning,
-  OTP generation/rotation and iOS device login/refresh remain unverified. See
+  are implemented. Official-library initialization, malformed-input rejection, live Apple provisioning,
+  OTP generation/rotation, persisted-state reopening and the credential-free API pass on Linux
+  x86_64 and macOS Apple Silicon interpreting AArch64. Real iOS device login/refresh remain
+  unverified. See
   [ANISETTE.md](ANISETTE.md).
 - The anisette server has no default; the settings screen offers SideStore's public server
   (`https://ani.sidestore.io`) as a one-tap suggestion, labeled as a third party.
