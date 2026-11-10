@@ -644,7 +644,9 @@ Prints the version string. Performs neither login nor device communication.
 
 ### 9.2 Login Flow
 
-1. Resolve `apple_id`: `SIDELOAD_APPLE_ID` → interactive input.
+1. Resolve `apple_id`: `SIDELOAD_APPLE_ID` → the Apple ID of the only saved session, when
+   exactly one Apple ID has a saved session (Section 9.6; print which Apple ID is used and how to
+   choose another) → interactive input. With no saved session, or several, ask as before.
 2. Resolve `password`: `SIDELOAD_APPLE_PASSWORD` → interactive input.
    - Interactive input MUST NOT be echoed. On platforms where echo cannot be suppressed, a warning
      MUST be printed before input.
@@ -712,6 +714,10 @@ on other hosts.
 ## 10. Device Integration Contract
 
 ### 10.1 Device Selection
+
+A device is counted once per UDID. usbmuxd lists a device with Wi-Fi connections enabled once per
+connection (USB and network, same UDID); such entries MUST be merged, preferring the USB
+connection.
 
 - With `--udid`:
   - If that device is connected, use it.

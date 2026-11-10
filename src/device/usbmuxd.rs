@@ -253,7 +253,7 @@ pub fn parse_device_list(reply: &Dictionary) -> Result<Vec<UsbmuxdDevice>> {
             .get("SerialNumber")
             .and_then(Value::as_str)
             .ok_or_else(|| transport_err("device entry has no SerialNumber"))?;
-        devices.push(UsbmuxdDevice {
+        let device = UsbmuxdDevice {
             device_id: device_id as u32,
             udid: udid.to_owned(),
             connection_type: props
@@ -261,9 +261,42 @@ pub fn parse_device_list(reply: &Dictionary) -> Result<Vec<UsbmuxdDevice>> {
                 .and_then(Value::as_str)
                 .unwrap_or("USB")
                 .to_owned(),
-        });
+        };
+        // A device with Wi-Fi connections enabled (for example after
+        // `sidestore pairing-file`) is listed once per connection: over USB
+        // and over the network, with the same UDID. It is one device
+        // (SPEC Section 10.1); keep one entry, preferring USB.
+        match devices
+            .iter_mut()
+            .find(|d: &&mut UsbmuxdDevice| same_udid(&d.udid, &device.udid))
+        {
+            Some(existing) => {
+                if !existing.is_usb() && device.is_usb() {
+                    *existing = device;
+                }
+            }
+            None => devices.push(device),
+        }
     }
     Ok(devices)
+}
+
+impl UsbmuxdDevice {
+    fn is_usb(&self) -> bool {
+        self.connection_type.eq_ignore_ascii_case("USB")
+    }
+}
+
+/// UDIDs compare case-insensitively and with or without the `-` that newer
+/// UDIDs contain.
+fn same_udid(a: &str, b: &str) -> bool {
+    let norm = |s: &str| {
+        s.chars()
+            .filter(|c| *c != '-')
+            .map(|c| c.to_ascii_uppercase())
+            .collect::<String>()
+    };
+    norm(a) == norm(b)
 }
 
 #[cfg(test)]
@@ -331,6 +364,51 @@ mod tests {
         assert_eq!(devices[0].device_id, 42);
         assert_eq!(devices[0].udid, "00008030-001A2B3C");
         assert_eq!(devices[0].connection_type, "USB");
+
+        // The same device over USB and Wi-Fi is listed once, as USB,
+        // whichever order usbmuxd reports them in.
+        let entry = |id: i64, kind: &str, serial: &str| {
+            let props: Dictionary = [
+                ("ConnectionType", Value::from(kind)),
+                ("SerialNumber", Value::from(serial)),
+            ]
+            .into_iter()
+            .collect();
+            Value::Dictionary(
+                [
+                    ("DeviceID", Value::Integer(id.into())),
+                    ("Properties", Value::Dictionary(props)),
+                ]
+                .into_iter()
+                .collect(),
+            )
+        };
+        for list in [
+            vec![
+                entry(7, "Network", "00008030-001A2B3C"),
+                entry(8, "USB", "00008030-001A2B3C"),
+            ],
+            vec![
+                entry(8, "USB", "00008030-001A2B3C"),
+                entry(7, "Network", "00008030001a2b3c"),
+            ],
+        ] {
+            let devices = parse_device_list(&dict([("DeviceList", Value::Array(list))])).unwrap();
+            assert_eq!(devices.len(), 1, "{devices:?}");
+            assert_eq!(devices[0].device_id, 8);
+            assert_eq!(devices[0].connection_type, "USB");
+        }
+        // Wi-Fi only stays listed; different devices stay separate.
+        let devices = parse_device_list(&dict([(
+            "DeviceList",
+            Value::Array(vec![
+                entry(7, "Network", "00008030-001A2B3C"),
+                entry(9, "USB", "00008101-000F00D"),
+            ]),
+        )]))
+        .unwrap();
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[0].connection_type, "Network");
 
         // Empty list and missing fields.
         assert!(

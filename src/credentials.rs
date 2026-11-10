@@ -44,6 +44,45 @@ pub fn resolve_apple_id(env: &dyn Env) -> Result<String> {
     apple_id_with(env, std::io::stdin().is_terminal(), &mut prompt_line)
 }
 
+/// Where `resolve_apple_id_or_saved` found the Apple ID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppleIdSource {
+    Env,
+    /// The only Apple ID with a saved session (SPEC Section 9.2 step 1).
+    Saved,
+    Prompt,
+}
+
+/// SPEC Section 9.2 step 1: `SIDELOAD_APPLE_ID`, else the only Apple ID in
+/// `saved` (the IDs with a saved session), else a prompt.
+pub fn resolve_apple_id_or_saved(
+    env: &dyn Env,
+    saved: &[String],
+) -> Result<(String, AppleIdSource)> {
+    apple_id_or_saved_with(env, saved, std::io::stdin().is_terminal(), &mut prompt_line)
+}
+
+fn apple_id_or_saved_with(
+    env: &dyn Env,
+    saved: &[String],
+    interactive: bool,
+    ask_line: &mut dyn FnMut(&str) -> Result<String>,
+) -> Result<(String, AppleIdSource)> {
+    if from_env(env, ENV_APPLE_ID).is_some() {
+        return Ok((
+            apple_id_with(env, interactive, ask_line)?,
+            AppleIdSource::Env,
+        ));
+    }
+    if let [only] = saved {
+        return Ok((only.to_lowercase(), AppleIdSource::Saved));
+    }
+    Ok((
+        apple_id_with(env, interactive, ask_line)?,
+        AppleIdSource::Prompt,
+    ))
+}
+
 /// The password for an already known `apple_id`.
 pub fn resolve_for(env: &dyn Env, apple_id: &str) -> Result<Credentials> {
     password_with(
@@ -245,6 +284,42 @@ mod tests {
 
     fn no_prompt(_: &str) -> Result<String> {
         panic!("must not prompt")
+    }
+
+    #[test]
+    fn single_saved_apple_id_skips_the_prompt() {
+        let saved = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let none = MapEnv(vec![]);
+        // Exactly one saved: used without prompting, even without a terminal.
+        assert_eq!(
+            apple_id_or_saved_with(&none, &saved(&["Me@X.com"]), false, &mut no_prompt).unwrap(),
+            ("me@x.com".to_owned(), AppleIdSource::Saved)
+        );
+        // The environment wins over the saved one.
+        let env = MapEnv(vec![(ENV_APPLE_ID, "other@x.com")]);
+        assert_eq!(
+            apple_id_or_saved_with(&env, &saved(&["me@x.com"]), false, &mut no_prompt).unwrap(),
+            ("other@x.com".to_owned(), AppleIdSource::Env)
+        );
+        // None or several saved: prompt as before.
+        for ids in [&[][..], &["a@x.com", "b@x.com"][..]] {
+            let mut asked = 0;
+            let mut ask = |_: &str| -> Result<String> {
+                asked += 1;
+                Ok("Typed@X.com".to_owned())
+            };
+            assert_eq!(
+                apple_id_or_saved_with(&none, &saved(ids), true, &mut ask).unwrap(),
+                ("typed@x.com".to_owned(), AppleIdSource::Prompt)
+            );
+            assert_eq!(asked, 1);
+            assert_eq!(
+                apple_id_or_saved_with(&none, &saved(ids), false, &mut no_prompt)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::CredentialsUnavailable
+            );
+        }
     }
 
     #[test]

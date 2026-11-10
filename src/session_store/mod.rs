@@ -48,6 +48,16 @@ pub fn delete(apple_id: &str) -> std::io::Result<bool> {
     backend::delete(apple_id)
 }
 
+/// The Apple IDs that have a saved entry (usable or not), for choosing the
+/// Apple ID without a prompt (SPEC Section 9.2). Empty when saving is
+/// disabled, unsupported, or the store cannot be listed.
+pub fn saved_apple_ids(env: &dyn Env) -> Vec<String> {
+    if !enabled(env) {
+        return Vec::new();
+    }
+    backend::accounts().unwrap_or_default()
+}
+
 /// Seconds since the Unix epoch; Apple reports token expiry in
 /// milliseconds, older responses in seconds.
 fn expiry_secs(expiry: u64) -> u64 {
@@ -111,6 +121,9 @@ mod backend {
     }
     pub fn delete(_apple_id: &str) -> std::io::Result<bool> {
         Ok(false)
+    }
+    pub fn accounts() -> std::io::Result<Vec<String>> {
+        Ok(Vec::new())
     }
 }
 
@@ -187,10 +200,14 @@ mod tests {
         assert!(save(&id, &s).unwrap());
         // Overwrite works.
         assert!(save(&id, &s).unwrap());
+        // Listed by account name, once.
+        let listed = backend::accounts().unwrap();
+        assert_eq!(listed.iter().filter(|a| **a == id).count(), 1, "{listed:?}");
         let back = load(&id, now).expect("saved session");
         assert_eq!(back.token(), "TOKEN");
         assert!(delete(&id).unwrap());
         assert!(!delete(&id).unwrap());
         assert!(load(&id, now).is_none());
+        assert!(!backend::accounts().unwrap().contains(&id));
     }
 }

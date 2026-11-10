@@ -47,7 +47,7 @@ pub fn authenticate(settings: &Settings, for_install: bool) -> Result<Authentica
     }
 
     // SPEC Section 9.6: reuse a saved session before asking for a password.
-    let apple_id = credentials::resolve_apple_id(&env).map_err(login)?;
+    let apple_id = resolve_apple_id(&env).map_err(login)?;
     if let Some(saved) = session_store::load(&apple_id, now_secs()) {
         output::info(format!("Using the saved session for {apple_id}."));
         let mut dev = Developer::new(saved, anisette).map_err(login)?;
@@ -67,6 +67,19 @@ pub fn authenticate(settings: &Settings, for_install: bool) -> Result<Authentica
     }
     let creds = credentials::resolve_for(&env, &apple_id).map_err(login)?;
     log_in(anisette, creds, true).map_err(login)
+}
+
+/// SPEC Section 9.2 step 1, with the only saved Apple ID as the default.
+fn resolve_apple_id(env: &ProcessEnv) -> Result<String> {
+    let saved = session_store::saved_apple_ids(env);
+    let (apple_id, source) = credentials::resolve_apple_id_or_saved(env, &saved)?;
+    if source == credentials::AppleIdSource::Saved {
+        output::info(format!(
+            "Using the Apple ID {apple_id} (the only one with a saved session; set {} to use another).",
+            crate::config::ENV_APPLE_ID
+        ));
+    }
+    Ok(apple_id)
 }
 
 /// Full GSA login; with `save`, keeps the resulting session (SPEC 9.6).
@@ -107,7 +120,7 @@ pub fn logout() -> Result<std::process::ExitCode> {
         output::info("Sessions are not saved on this platform; nothing to remove.");
         return Ok(std::process::ExitCode::SUCCESS);
     }
-    let apple_id = credentials::resolve_apple_id(&env)?;
+    let apple_id = resolve_apple_id(&env)?;
     match session_store::delete(&apple_id) {
         Ok(true) => output::info(format!("Removed the saved session for {apple_id}.")),
         Ok(false) => output::info(format!("No saved session for {apple_id}.")),
