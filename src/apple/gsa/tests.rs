@@ -10,10 +10,13 @@ struct Anisette;
 impl AnisetteProvider for Anisette {
     fn headers(&mut self) -> Result<AnisetteData> {
         Ok(AnisetteData {
-            headers: vec![(
-                "X-Mme-Client-Info".into(),
-                crate::anisette::local_adi::provisioning::ANDROID_CLIENT_INFO.into(),
-            )],
+            headers: vec![
+                (
+                    "X-Mme-Client-Info".into(),
+                    crate::anisette::local_adi::provisioning::ANDROID_CLIENT_INFO.into(),
+                ),
+                ("X-Apple-I-MD-RINFO".into(), "17106176".into()),
+            ],
         })
     }
 }
@@ -134,6 +137,19 @@ impl Transport for Wire {
         } else {
             let body = plist::from_bytes(&r.body).unwrap();
             let req = body.get("Request").unwrap();
+            let cpd = req.get("cpd").unwrap();
+            for (key, value) in [
+                ("bootstrap", true),
+                ("icscrec", true),
+                ("prkgen", true),
+                ("pbe", false),
+            ] {
+                assert_eq!(cpd.get(key).and_then(Value::as_bool), Some(value));
+            }
+            assert_eq!(
+                cpd.get("X-Apple-I-MD-RINFO").and_then(Value::as_u64),
+                Some(17106176)
+            );
             assert_eq!(
                 req.get("cpd")
                     .and_then(|v| v.get("X-Mme-Client-Info"))
@@ -201,6 +217,26 @@ impl Transport for Wire {
             url: r.url.clone(),
         })
     }
+}
+
+#[test]
+fn cpd_routing_is_typed_without_changing_http_headers_or_disclosing_invalid_values() {
+    let mut data = Anisette.headers().unwrap();
+    let cpd = client_provisioning_data(&data).unwrap();
+    assert_eq!(
+        cpd.get("X-Apple-I-MD-RINFO").and_then(Value::as_u64),
+        Some(17106176)
+    );
+    let routing = data
+        .headers
+        .iter_mut()
+        .find(|(k, _)| k == "X-Apple-I-MD-RINFO")
+        .unwrap();
+    assert_eq!(routing.1, "17106176");
+    routing.1 = "invalid-routing-fixture".into();
+    let error = client_provisioning_data(&data).unwrap_err();
+    assert_eq!(error.code, ErrorCode::AnisetteUnavailable);
+    assert!(!error.message.contains("invalid-routing-fixture"));
 }
 #[test]
 fn srp_login_and_app_token_both_protocols() {

@@ -3,7 +3,7 @@
 use super::{Https, Transport, description, endpoint};
 use crate::{
     Error, ErrorCode, Result,
-    anisette::AnisetteProvider,
+    anisette::{AnisetteData, AnisetteProvider},
     credentials::{CodeInput, Credentials},
     crypto::{
         self, cbc, gcm,
@@ -18,6 +18,33 @@ use crate::{
 const LOOKUP: &str = "https://gsa.apple.com/grandslam/GsService2/lookup";
 const APP: &str = "com.apple.gs.xcode.auth";
 const MAX_BODY: usize = 4 * 1024 * 1024;
+
+/// Encode provisioning metadata with plist types, independently of HTTP's
+/// string-only representation. Shared with the password-free SRP-init probe.
+pub fn client_provisioning_data(data: &AnisetteData) -> Result<Dictionary> {
+    let mut d = Dictionary::from_iter([
+        ("bootstrap", Value::Boolean(true)),
+        ("icscrec", Value::Boolean(true)),
+        ("loc", Value::from("en_US")),
+        ("pbe", Value::Boolean(false)),
+        ("prkgen", Value::Boolean(true)),
+        ("svct", Value::from("iCloud")),
+    ]);
+    for (key, value) in &data.headers {
+        if key.eq_ignore_ascii_case("X-Apple-I-MD-RINFO") {
+            let routing = value.parse::<u64>().map_err(|_| {
+                Error::new(
+                    ErrorCode::AnisetteUnavailable,
+                    "invalid anisette routing information",
+                )
+            })?;
+            d.insert("X-Apple-I-MD-RINFO", Value::from(routing));
+        } else {
+            d.insert(key.clone(), value.clone());
+        }
+    }
+    Ok(d)
+}
 fn failed(message: impl Into<String>) -> Error {
     Error::new(ErrorCode::LoginFailed, message)
 }
@@ -214,18 +241,7 @@ impl<T: Transport> Gsa<T> {
         Ok(u.into())
     }
     fn cpd(&mut self) -> Result<Dictionary> {
-        let mut d = Dictionary::from_iter([
-            ("bootstrap", "true"),
-            ("icscrec", "true"),
-            ("loc", "en_US"),
-            ("pbe", "false"),
-            ("prkgen", "true"),
-            ("svct", "iCloud"),
-        ]);
-        for (k, v) in self.anisette.headers()?.headers {
-            d.insert(k, v);
-        }
-        Ok(d)
+        client_provisioning_data(&self.anisette.headers()?)
     }
     fn operation(&mut self, request: Dictionary, secrets: &[&str]) -> Result<Value> {
         let p = Value::Dictionary(Dictionary::from_iter([

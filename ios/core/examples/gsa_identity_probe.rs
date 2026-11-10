@@ -62,17 +62,7 @@ fn probe(
         eprintln!("SRP init {label}: lookup HTTP {http}, no service URL");
         return Ok(false);
     };
-    let mut cpd = Dictionary::from_iter([
-        ("bootstrap", "true"),
-        ("icscrec", "true"),
-        ("loc", "en_US"),
-        ("pbe", "false"),
-        ("prkgen", "true"),
-        ("svct", "iCloud"),
-    ]);
-    for (key, value) in &data.headers {
-        cpd.insert(key.clone(), value.clone());
-    }
+    let cpd = sideload::apple::gsa::client_provisioning_data(&data)?;
     let srp = SrpClient::new()?;
     let body = Value::Dictionary(Dictionary::from_iter([
         (
