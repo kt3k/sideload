@@ -39,7 +39,7 @@ struct TwoFactorView: View {
                         .keyboardType(.numberPad)
                         .textContentType(.oneTimeCode)
                 } footer: {
-                    Text("Enter the code Apple sent to your trusted devices.")
+                    Text("Enter the code Apple sent to your trusted device or phone. If a code has already arrived, use it before requesting another.")
                 }
                 Section {
                     Button("Send a New Code") { model.answerCode("resend") }

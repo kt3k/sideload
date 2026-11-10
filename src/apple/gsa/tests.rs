@@ -11,6 +11,9 @@ impl AnisetteProvider for Anisette {
     fn headers(&mut self) -> Result<AnisetteData> {
         Ok(AnisetteData {
             headers: vec![
+                ("X-Mme-Device-Id".into(), "fixture-device".into()),
+                ("User-Agent".into(), "fixture-provider-agent".into()),
+                ("X-Apple-I-MD".into(), base64::encode(b"otp")),
                 (
                     "X-Mme-Client-Info".into(),
                     crate::anisette::local_adi::provisioning::ANDROID_CLIENT_INFO.into(),
@@ -34,6 +37,13 @@ struct Server {
     resends: usize,
     operations: Vec<String>,
     tamper: bool,
+    automatic: bool,
+    sms: bool,
+    misreported_sms: bool,
+    missing_phone: bool,
+    metadata_status: u16,
+    resync_pending: usize,
+    header_sim: bool,
 }
 struct Wire(Rc<RefCell<Server>>);
 fn dict(pairs: impl IntoIterator<Item = (&'static str, Value)>) -> Value {
@@ -105,6 +115,92 @@ impl Transport for Wire {
         let mut s = self.0.borrow_mut();
         assert!(r.headers.iter().any(|(k, v)| k == "X-Mme-Client-Info"
             && v == crate::anisette::local_adi::provisioning::ANDROID_CLIENT_INFO));
+        assert!(
+            r.headers
+                .iter()
+                .any(|(k, v)| k == "User-Agent" && v == "fixture-provider-agent")
+        );
+        assert!(
+            r.headers
+                .iter()
+                .any(|(k, v)| k == "Connection" && v == "close")
+        );
+        let mut response_headers = Vec::new();
+        if r.url == "https://gsa.apple.com/auth" || r.url.contains("/auth/verify/phone") {
+            assert!(
+                r.headers
+                    .iter()
+                    .any(|(k, v)| k == "Accept" && v == "application/json")
+            );
+            assert!(
+                r.headers
+                    .iter()
+                    .any(|(k, v)| k == "Content-Type" && v == "application/json")
+            );
+            assert!(
+                r.headers.iter().any(|(k, v)| k == "X-Apple-Identity-Token"
+                    && v == &base64::encode(b"1234:idms-secret"))
+            );
+            let (http, body) = if r.url.ends_with("/auth") {
+                assert_eq!(r.method, "GET");
+                let phone = if s.missing_phone {
+                    "[]"
+                } else {
+                    r#"[{"id":7}]"#
+                };
+                (
+                    if s.metadata_status == 0 {
+                        200
+                    } else {
+                        s.metadata_status
+                    },
+                    format!(
+                        r#"{{"noTrustedDevices":{},"trustedPhoneNumbers":{phone}}}"#,
+                        s.sms
+                    )
+                    .into_bytes(),
+                )
+            } else {
+                let body = json::parse(std::str::from_utf8(&r.body).unwrap()).unwrap();
+                assert_eq!(
+                    body.get("phoneNumber").unwrap().get("id").unwrap().as_f64(),
+                    Some(7.0)
+                );
+                assert_eq!(body.get("mode").unwrap().as_str(), Some("sms"));
+                if r.url.ends_with("/phone") {
+                    assert_eq!(r.method, "PUT");
+                    assert!(body.get("securityCode").is_none());
+                    s.resends += 1;
+                    (200, b"{}".to_vec())
+                } else {
+                    assert_eq!(r.method, "POST");
+                    let code = body
+                        .get("securityCode")
+                        .unwrap()
+                        .get("code")
+                        .unwrap()
+                        .as_str()
+                        .unwrap();
+                    if code == "123456" {
+                        s.verified = true;
+                        (200, Vec::new())
+                    } else {
+                        s.wrong += 1;
+                        (
+                            400,
+                            br#"{"serviceErrors":[{"code":"-21669","message":"fixture"}]}"#
+                                .to_vec(),
+                        )
+                    }
+                }
+            };
+            return Ok(Response {
+                status: http,
+                headers: vec![],
+                body,
+                url: r.url.clone(),
+            });
+        }
         let p = if r.url == LOOKUP {
             dict([(
                 "urls",
@@ -156,12 +252,34 @@ impl Transport for Wire {
                     .and_then(Value::as_str),
                 Some(crate::anisette::local_adi::provisioning::ANDROID_CLIENT_INFO)
             );
+            assert_eq!(
+                cpd.get("X-Apple-I-MD").and_then(Value::as_str),
+                r.headers
+                    .iter()
+                    .find(|(k, _)| k == "X-Apple-I-MD")
+                    .map(|(_, v)| v.as_str())
+            );
             let op = string(req, "o").unwrap();
             s.operations.push(op.into());
             let response = match op {
                 "init" => {
                     assert_eq!(string(req, "u").unwrap(), "user@example.com");
-                    s.challenge(data(req, "A2k").unwrap(), "user@example.com")
+                    if s.resync_pending > 0 {
+                        s.resync_pending -= 1;
+                        let mut reply = Dictionary::from_iter([(
+                            "Status",
+                            dict([("ec", (-45061i64).into()), ("hsc", 434i64.into())]),
+                        )]);
+                        if s.header_sim {
+                            response_headers
+                                .push(("X-Apple-I-MD-DATA".into(), base64::encode(b"sim fixture")));
+                        } else {
+                            reply.insert("X-Apple-I-MD-DATA", base64::encode(b"sim fixture"));
+                        }
+                        Value::Dictionary(reply)
+                    } else {
+                        s.challenge(data(req, "A2k").unwrap(), "user@example.com")
+                    }
                 }
                 "complete" => {
                     assert_eq!(data(req, "M1").unwrap(), s.m1);
@@ -170,7 +288,18 @@ impl Transport for Wire {
                     let encrypted = cbc::encrypt(&key, &iv[..16], &spd().to_xml()).unwrap();
                     let mut status = Dictionary::from_iter([("ec", 0i64)]);
                     if s.two_factor && !s.verified {
-                        status.insert("au", "trustedDeviceSecondaryAuth");
+                        if s.automatic {
+                            status.insert("hsc", 409i64);
+                        } else {
+                            status.insert(
+                                "au",
+                                if s.sms && !s.misreported_sms {
+                                    "secondaryAuth"
+                                } else {
+                                    "trustedDeviceSecondaryAuth"
+                                },
+                            );
+                        }
                     }
                     let mut proof = s.proof.clone();
                     if s.tamper {
@@ -212,7 +341,7 @@ impl Transport for Wire {
         };
         Ok(Response {
             status: 200,
-            headers: vec![],
+            headers: response_headers,
             body: p.to_xml(),
             url: r.url.clone(),
         })
@@ -326,4 +455,152 @@ fn apple_error_redacts_credentials() {
     assert!(e.message.contains("-1"));
     assert!(!e.message.contains("password"));
     assert!(!e.message.contains("token"));
+}
+
+#[test]
+fn automatic_409_uses_the_delivered_code_without_requesting_a_new_one() {
+    let server = Rc::new(RefCell::new(Server {
+        protocol: "s2k",
+        two_factor: true,
+        automatic: true,
+        ..Server::default()
+    }));
+    let mut g = Gsa::with_transport(Box::new(Anisette), Wire(server.clone()));
+    let session = g
+        .authenticate("user@example.com", "password", &mut || {
+            Ok(CodeInput::Code("123456".into()))
+        })
+        .unwrap();
+    assert_eq!(session.token(), "xcode-secret");
+    assert_eq!(server.borrow().resends, 0);
+    assert!(server.borrow().verified);
+}
+
+#[test]
+fn sms_json_flow_uses_the_returned_phone_id_and_retries_wrong_codes() {
+    for misreported_sms in [false, true] {
+        let server = Rc::new(RefCell::new(Server {
+            protocol: "s2k",
+            two_factor: true,
+            sms: true,
+            misreported_sms,
+            ..Server::default()
+        }));
+        let mut g = Gsa::with_transport(Box::new(Anisette), Wire(server.clone()));
+        let mut answers = vec![
+            CodeInput::Code("000000".into()),
+            CodeInput::Resend,
+            CodeInput::Code("123456".into()),
+        ]
+        .into_iter();
+        g.authenticate("user@example.com", "password", &mut || {
+            Ok(answers.next().unwrap())
+        })
+        .unwrap();
+        let s = server.borrow();
+        assert!(s.verified);
+        assert_eq!(s.wrong, 1);
+        assert_eq!(s.resends, 2);
+        assert_eq!(
+            s.operations,
+            ["init", "complete", "init", "complete", "apptokens"]
+        );
+    }
+}
+
+#[test]
+fn sms_missing_phone_or_forbidden_metadata_fails_before_prompting() {
+    for (missing_phone, metadata_status) in [(true, 0), (false, 403)] {
+        let server = Rc::new(RefCell::new(Server {
+            protocol: "s2k",
+            two_factor: true,
+            sms: true,
+            missing_phone,
+            metadata_status,
+            ..Server::default()
+        }));
+        let mut g = Gsa::with_transport(Box::new(Anisette), Wire(server));
+        let error = g
+            .authenticate("user@example.com", "password", &mut || {
+                panic!("no code requested without SMS delivery")
+            })
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::TwoFactorFailed);
+        assert!(!error.message.contains("idms-secret"));
+    }
+}
+
+struct ChangingAnisette {
+    calls: usize,
+    resyncs: Rc<RefCell<usize>>,
+    change: bool,
+}
+impl AnisetteProvider for ChangingAnisette {
+    fn headers(&mut self) -> Result<AnisetteData> {
+        self.calls += 1;
+        let mut data = Anisette.headers()?;
+        for (key, value) in &mut data.headers {
+            if key == "X-Apple-I-MD" {
+                *value = base64::encode(format!("fresh-{}", self.calls).as_bytes());
+            }
+            if self.change && self.calls > 1 && key == "X-Mme-Device-Id" {
+                *value = "different-device".into();
+            }
+        }
+        Ok(data)
+    }
+    fn resync(&mut self, sim: &str) -> Result<AnisetteData> {
+        assert_eq!(base64::decode(sim).unwrap(), b"sim fixture");
+        *self.resyncs.borrow_mut() += 1;
+        self.headers()
+    }
+}
+#[test]
+fn resynchronization_is_bounded_and_uses_the_existing_identity() {
+    for (resync_pending, header_sim) in [(1, false), (1, true), (2, false)] {
+        let server = Rc::new(RefCell::new(Server {
+            protocol: "s2k",
+            resync_pending,
+            header_sim,
+            ..Server::default()
+        }));
+        let resyncs = Rc::new(RefCell::new(0));
+        let provider = ChangingAnisette {
+            calls: 0,
+            resyncs: resyncs.clone(),
+            change: false,
+        };
+        let mut g = Gsa::with_transport(Box::new(provider), Wire(server.clone()));
+        let result = g.authenticate("user@example.com", "password", &mut || panic!());
+        if resync_pending == 1 {
+            assert!(result.is_ok());
+            assert_eq!(
+                server.borrow().operations,
+                ["init", "init", "complete", "apptokens"]
+            );
+        } else {
+            assert_eq!(result.unwrap_err().code, ErrorCode::AnisetteUnavailable);
+            assert_eq!(server.borrow().operations, ["init", "init"]);
+        }
+        assert_eq!(*resyncs.borrow(), 1);
+    }
+}
+#[test]
+fn changing_identity_aborts_before_the_srp_request() {
+    let server = Rc::new(RefCell::new(Server {
+        protocol: "s2k",
+        ..Server::default()
+    }));
+    let provider = ChangingAnisette {
+        calls: 0,
+        resyncs: Rc::new(RefCell::new(0)),
+        change: true,
+    };
+    let mut g = Gsa::with_transport(Box::new(provider), Wire(server.clone()));
+    let error = g
+        .authenticate("user@example.com", "password", &mut || panic!())
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::AnisetteUnavailable);
+    assert!(server.borrow().operations.is_empty());
+    assert!(!error.message.contains("different-device"));
 }

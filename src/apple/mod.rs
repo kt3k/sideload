@@ -17,7 +17,7 @@ pub trait Transport {
 pub struct Https(Client);
 // Published at https://www.apple.com/certificateauthority/AppleRootCA-G3.cer.
 // Android client-info can select gsd.apple.com, whose chain ends at this root.
-const APPLE_ROOT_G3: &[u8] = include_bytes!("certs/AppleRootCA-G3.cer");
+pub(crate) const APPLE_ROOT_G3: &[u8] = include_bytes!("certs/AppleRootCA-G3.cer");
 impl Https {
     pub fn new() -> Result<Self> {
         Ok(Self(

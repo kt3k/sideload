@@ -158,3 +158,24 @@ cargo run -p sideload-ios-core --profile ios --example gsa_identity_probe -- \
 `Check Anisette` continues to mean generation/provisioning only. Actual iOS account sign-in
 with the corrected build remains unverified. Do not treat successful provisioning or a completed
 diagnostic probe as a confirmed fix for account-side authentication errors.
+
+
+## Authentication compatibility update
+
+Remote mode offers explicit presets for mac-ani.jkcoxson.com, ani.jkcoxson.com and
+ani.iloader.app. Choosing a provider clears the cached login session while retaining
+saved credentials. There is no automatic fallback from on-device mode. Android ADI
+generation can succeed while Apple rejects account login; local remains experimental.
+
+Remote provisioning is bound to the server's client info and matching User-Agent.
+Each GSA operation uses fresh Anisette in both its headers and CPD, and sign-in pins
+the same identity. Remote SRP init resynchronization (`hsc 434`) retries once with
+Apple's machine data, retaining the same provider and identity; unsupported providers
+fail explicitly. Local resynchronization remains pending.
+
+An automatic `hsc 409` challenge without `au` uses the already delivered code without
+requesting another. SMS uses Apple's JSON authentication endpoints and the first valid
+phone ID from account metadata; it never assumes phone ID 1. Wrong codes may be retried
+and resend requires user action. Successful verification is followed by fresh SRP login.
+These paths have mock regression coverage. Real iOS account login and SMS remain
+unverified; successful Anisette generation alone does not establish authentication.

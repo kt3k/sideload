@@ -63,3 +63,17 @@ These checks do not contact live Apple or anisette services. Live interoperabili
 unverified. Apple login and Developer Services APIs and diagnostic commands are implemented; install
 wiring remains pending. The provider factory selects local ADI by default on supported Linux
 hosts; see LOCAL_ADI.md for its partial rollout and remaining platform/validation work.
+
+## Authentication compatibility
+
+Cached provisioning is bound to the server's `client_info` and `user_agent` together.
+A legacy cache without metadata, or a changed provider identity, requires new provisioning.
+The previous file is preserved until the replacement succeeds. These values are forwarded
+unchanged; a Mac label alone does not make Android ADI acceptable to Apple.
+
+GSA uses one fresh Anisette snapshot for each operation's HTTP headers and CPD, and pins
+its device ID, client info and User-Agent throughout sign-in. On SRP init `hsc 434`, the
+remote backend sends `sim`, `device_id` and `md_lu` alongside `identifier` and `adi_pb` to
+`/v3/get_headers`. This requires a server implementing resync; failure is explicit and
+never switches identities or servers. A valid returned `adi_pb` replaces the cached blob.
+Only one resync is attempted. Local backends currently report unsupported.

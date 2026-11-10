@@ -53,10 +53,17 @@ struct SettingsView: View {
                             .keyboardType(.URL)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
-                        if anisetteServer.isEmpty {
-                            Button("Use \(Settings.suggestedAnisetteServer)") {
-                                anisetteServer = Settings.suggestedAnisetteServer
+                        Menu("Choose Recommended Server") {
+                            ForEach(Settings.anisetteServers, id: \.url) { server in
+                                Button("\(server.name) — \(server.url)") {
+                                    anisetteServer = server.url
+                                }
                             }
+                        }
+                    } else {
+                        Button("Use Recommended Remote Server") {
+                            anisetteServer = Settings.suggestedAnisetteServer
+                            anisetteMode = "remote"
                         }
                     }
                     Button("Check Anisette") { Task { await model.checkAnisette() } }
@@ -65,11 +72,14 @@ struct SettingsView: View {
                     Text("Anisette")
                 } footer: {
                     if anisetteMode == "local" {
-                        Text("Experimental. Generates Apple's device identification data on this device. Initial setup downloads Apple components and contacts Apple. Keep this app open for the first check. This verifies data generation, not Apple account sign-in. Your Apple ID and password are not needed for this check.")
+                        Text("Experimental. Generates identification data using Android components on this device. Apple may reject this data for account sign-in. Choose Remote Server to use another provider. Check Anisette verifies generation only; it does not test account sign-in.")
                     } else {
-                        Text("An anisette server is a third party that generates Apple's device identification data for logging in. It does not receive your password. Local failures never switch to a remote server automatically.")
+                        Text("The selected server is a third party that generates Apple's device identification data. It receives a separate Anisette identity, not your Apple ID, password or verification code. Its client information and user agent are used together. Server availability and account sign-in can vary.")
                     }
                 }
+                .disabled(model.busy)
+                .onChange(of: anisetteMode) { _ in Keychain.set(nil, for: Keychain.session) }
+                .onChange(of: anisetteServer) { _ in Keychain.set(nil, for: Keychain.session) }
 
                 Section {
                     TextField(Settings.defaultDeviceHost, text: $deviceHost)

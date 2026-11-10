@@ -55,6 +55,8 @@ fn current_time() -> Result<String> {
 struct State {
     identifier: [u8; 16],
     adi_pb: Option<Vec<u8>>,
+    client_info: Option<String>,
+    user_agent: Option<String>,
 }
 impl State {
     fn new() -> Result<Self> {
@@ -63,6 +65,8 @@ impl State {
         Ok(Self {
             identifier: random.try_into().unwrap(),
             adi_pb: None,
+            client_info: None,
+            user_agent: None,
         })
     }
     fn device_id(&self) -> String {
@@ -85,6 +89,12 @@ impl State {
         if let Some(pb) = &self.adi_pb {
             d.insert("adi_pb", Value::Data(pb.clone()));
         }
+        if let Some(info) = &self.client_info {
+            d.insert("client_info", info.clone());
+        }
+        if let Some(agent) = &self.user_agent {
+            d.insert("user_agent", agent.clone());
+        }
         Value::Dictionary(d).to_xml()
     }
     fn parse(raw: &[u8]) -> Result<Self> {
@@ -99,7 +109,17 @@ impl State {
             Some(Value::Data(b)) if !b.is_empty() && b.len() <= MAX_ADI => Some(b.clone()),
             _ => return Err(unavailable("invalid persisted ADI state")),
         };
-        Ok(Self { identifier, adi_pb })
+        let metadata = |key| match v.get(key) {
+            None => Ok(None),
+            Some(Value::String(s)) if header_value(s) => Ok(Some(s.clone())),
+            _ => Err(unavailable("invalid saved Anisette client metadata")),
+        };
+        Ok(Self {
+            identifier,
+            adi_pb,
+            client_info: metadata("client_info")?,
+            user_agent: metadata("user_agent")?,
+        })
     }
 }
 struct ClientInfo {
@@ -161,7 +181,10 @@ impl RemoteV3 {
     pub fn new(server: &str, config_dir: &Path) -> Result<Self> {
         // gsa.apple.com chains to the Apple Root CA, which is not in the
         // Mozilla root set; Sideloader and isideload trust it explicitly too.
-        let apple_root = [crate::sign::apple_certs::ROOT_CA.to_vec()];
+        let apple_root = [
+            crate::sign::apple_certs::ROOT_CA.to_vec(),
+            crate::apple::APPLE_ROOT_G3.to_vec(),
+        ];
         let client = Client::new(concat!("sideload/", env!("CARGO_PKG_VERSION")), &apple_root)
             .map_err(|_| unavailable("cannot initialize anisette TLS client"))?;
         Self::with_transport(server, config_dir, Box::new(Network(client)))
@@ -251,6 +274,19 @@ impl RemoteV3 {
                 Err(_) => return Err(unavailable("cannot inspect anisette state")),
             });
         }
+        let info = self.info.as_ref().unwrap();
+        let state = self.state.as_ref().unwrap();
+        if state.adi_pb.is_some()
+            && (state.client_info.as_deref() != Some(&info.description)
+                || state.user_agent.as_deref() != Some(&info.user_agent))
+        {
+            // Never interpret another backend's ADI state. The old file is
+            // retained until replacement provisioning succeeds atomically.
+            self.state = Some(State::new()?);
+        }
+        let state = self.state.as_mut().unwrap();
+        state.client_info = Some(info.description.clone());
+        state.user_agent = Some(info.user_agent.clone());
         Ok(())
     }
     fn state_directories(&self, create: bool) -> Result<()> {
@@ -425,17 +461,23 @@ impl RemoteV3 {
             stage += 1;
         }
     }
-    fn fetch(&mut self) -> Result<Option<AnisetteData>> {
+    fn fetch(&mut self, sim: Option<&str>) -> Result<Option<AnisetteData>> {
         let state = self.state.as_ref().unwrap();
-        let body = json::Value::object([
+        let mut fields = vec![
             ("identifier", base64::encode(&state.identifier).into()),
             (
                 "adi_pb",
                 base64::encode(state.adi_pb.as_ref().unwrap()).into(),
             ),
-        ])
-        .to_string()
-        .into_bytes();
+        ];
+        if let Some(sim) = sim {
+            fields.extend([
+                ("sim", sim.into()),
+                ("device_id", state.device_id().into()),
+                ("md_lu", state.local_user_id().into()),
+            ]);
+        }
+        let body = json::Value::object(fields).to_string().into_bytes();
         let reply = self.json(
             Request::post(format!("{}/v3/get_headers", self.server), body)
                 .header("Content-Type", "application/json"),
@@ -466,7 +508,7 @@ impl RemoteV3 {
             return Err(unavailable("invalid anisette header values"));
         }
         let state = self.state.as_ref().unwrap();
-        Ok(Some(AnisetteData {
+        let data = AnisetteData {
             headers: vec![
                 ("X-Apple-I-MD".into(), md.into()),
                 ("X-Apple-I-MD-M".into(), machine.into()),
@@ -487,7 +529,22 @@ impl RemoteV3 {
                 ("X-Apple-Locale".into(), "en_US".into()),
                 ("X-Apple-I-SRL-NO".into(), "0".into()),
             ],
-        }))
+        };
+        if sim.is_some() {
+            if let Some(value) = reply.get("adi_pb") {
+                let replacement = valid_base64(
+                    value
+                        .as_str()
+                        .ok_or_else(|| unavailable("invalid resynchronized state"))?,
+                )?;
+                if replacement.len() > MAX_ADI {
+                    return Err(unavailable("resynchronized state too large"));
+                }
+                self.state.as_mut().unwrap().adi_pb = Some(replacement);
+                self.save()?;
+            }
+        }
+        Ok(Some(data))
     }
 }
 impl AnisetteProvider for RemoteV3 {
@@ -496,16 +553,26 @@ impl AnisetteProvider for RemoteV3 {
         if self.state.as_ref().unwrap().adi_pb.is_none() {
             self.provision()?;
         }
-        if let Some(headers) = self.fetch()? {
+        if let Some(headers) = self.fetch(None)? {
             return Ok(headers);
         }
         // ADI was invalidated upstream: one bounded reprovision using the same
         // device identity, with no recursive or unbounded retry.
         self.state.as_mut().unwrap().adi_pb = None;
-        self.save()?;
         self.provision()?;
-        self.fetch()?
+        self.fetch(None)?
             .ok_or_else(|| unavailable("server still reports unprovisioned ADI after one reset"))
+    }
+    fn resync(&mut self, sim: &str) -> Result<AnisetteData> {
+        valid_base64(sim)?;
+        self.prepare()?;
+        if self.state.as_ref().unwrap().adi_pb.is_none() {
+            return Err(unavailable(
+                "cannot resynchronize without the existing provisioning state",
+            ));
+        }
+        self.fetch(Some(sim))?
+            .ok_or_else(|| unavailable("resynchronization rejected; existing identity retained"))
     }
 }
 fn valid_base64(s: &str) -> Result<Vec<u8>> {

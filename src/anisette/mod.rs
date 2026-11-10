@@ -23,6 +23,13 @@ pub struct AnisetteData {
 pub trait AnisetteProvider {
     /// Returns fresh headers, provisioning the backend first if needed.
     fn headers(&mut self) -> Result<AnisetteData>;
+    /// Apple requested hsc 434. Only the provisioning backend can handle sim.
+    fn resync(&mut self, _sim: &str) -> Result<AnisetteData> {
+        Err(crate::Error::new(
+            crate::ErrorCode::AnisetteUnavailable,
+            "this Anisette backend does not support Apple's resynchronization request",
+        ))
+    }
 }
 
 impl std::fmt::Debug for AnisetteData {

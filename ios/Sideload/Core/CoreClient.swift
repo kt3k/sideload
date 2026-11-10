@@ -29,7 +29,18 @@ enum Settings {
     /// Unattended refreshes only touch apps expiring within this window
     /// (ios/SPEC.md Section 8).
     static let refreshThreshold: TimeInterval = 2 * 24 * 60 * 60
-    static let suggestedAnisetteServer = "https://ani.sidestore.io"
+    struct AnisetteServer {
+        let name: String
+        let url: String
+    }
+    // Providers published in AltServer's remote-altservers list. Selection is
+    // explicit; the server's actual client_info/user_agent are used verbatim.
+    static let anisetteServers = [
+        AnisetteServer(name: "jkcoxson (Mac)", url: "https://mac-ani.jkcoxson.com"),
+        AnisetteServer(name: "jkcoxson", url: "https://ani.jkcoxson.com"),
+        AnisetteServer(name: "iLoader", url: "https://ani.iloader.app"),
+    ]
+    static let suggestedAnisetteServer = anisetteServers[0].url
     static let defaultDeviceHost = "10.7.0.1"
 }
 

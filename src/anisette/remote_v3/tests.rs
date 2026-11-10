@@ -360,3 +360,63 @@ fn refuses_symlink_state_directory_before_creating_files() {
     assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
     assert_eq!(log.borrow().sockets, 0);
 }
+
+#[test]
+fn resync_preserves_identity_and_does_not_reprovision() {
+    let dir = WorkDir::create(false).unwrap();
+    let log = Rc::new(RefCell::new(Log::default()));
+    let mut p = provider(dir.path(), &log);
+    let before = p.headers().unwrap();
+    let sim = base64::encode(b"resync fixture");
+    let after = p.resync(&sim).unwrap();
+    assert_eq!(
+        header(&before, "X-Mme-Device-Id"),
+        header(&after, "X-Mme-Device-Id")
+    );
+    assert_eq!(log.borrow().sockets, 1);
+    let l = log.borrow();
+    let request = l
+        .requests
+        .iter()
+        .rev()
+        .find(|r| r.url.ends_with("/v3/get_headers"))
+        .unwrap();
+    let body = json::parse(std::str::from_utf8(&request.body).unwrap()).unwrap();
+    assert_eq!(field(&body, "sim").unwrap(), sim);
+    assert_eq!(
+        field(&body, "device_id").unwrap(),
+        header(&before, "X-Mme-Device-Id")
+    );
+    assert_eq!(
+        field(&body, "md_lu").unwrap(),
+        header(&before, "X-Apple-I-MD-LU")
+    );
+    drop(l);
+    log.borrow_mut().replies.push_back(invalidated());
+    assert!(p.resync(&sim).is_err());
+    assert_eq!(log.borrow().sockets, 1);
+}
+
+#[test]
+fn legacy_metadata_reprovisions_and_failed_migration_preserves_disk() {
+    let dir = WorkDir::create(false).unwrap();
+    let log = Rc::new(RefCell::new(Log::default()));
+    let mut p = provider(dir.path(), &log);
+    p.headers().unwrap();
+    let mut state = State::parse(&fs::read(p.state_path()).unwrap()).unwrap();
+    let previous = state.identifier;
+    state.client_info = None;
+    state.user_agent = None;
+    fs::write(p.state_path(), state.to_plist()).unwrap();
+    let original = fs::read(p.state_path()).unwrap();
+    log.borrow_mut().messages = Some(vec![Message::Text("{}".into())]);
+    assert!(provider(dir.path(), &log).headers().is_err());
+    assert_eq!(fs::read(p.state_path()).unwrap(), original);
+    log.borrow_mut().messages = None;
+    let mut migrated = provider(dir.path(), &log);
+    migrated.headers().unwrap();
+    let state = State::parse(&fs::read(migrated.state_path()).unwrap()).unwrap();
+    assert_ne!(state.identifier, previous);
+    assert!(state.client_info.is_some());
+    assert!(state.user_agent.is_some());
+}
