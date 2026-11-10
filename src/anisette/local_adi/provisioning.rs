@@ -18,6 +18,13 @@ use std::{
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+// This provider runs Apple's Android ADI libraries, including under the iOS
+// interpreter. Describe that backend rather than claiming native macOS ADI.
+pub const ANDROID_CLIENT_INFO: &str =
+    "<Android> <Android;14;UQ1A.240205.004> <com.apple.AuthKit/1 (com.apple.android.music/4.9.6)>";
+const LEGACY_MAC_CLIENT_INFO: &str =
+    "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>";
 pub fn error(message: impl std::fmt::Display) -> Error {
     Error::new(
         ErrorCode::AnisetteUnavailable,
@@ -47,12 +54,17 @@ impl Identity {
                 .map(str::to_owned)
                 .ok_or_else(|| error("invalid device identity field"))
         };
-        let identity = Self {
+        let mut identity = Self {
             description: get("serverFriendlyDescription")?,
             device_id: get("uniqueDeviceIdentifier")?,
             android_id: get("adiIdentifier")?,
             local_user: get("localUserUUID")?,
         };
+        // Existing installations retain the same UUIDs and provisioning. Only
+        // our old default label changes, in memory; custom labels are retained.
+        if identity.description == LEGACY_MAC_CLIENT_INFO {
+            identity.description = ANDROID_CLIENT_INFO.to_owned();
+        }
         if identity.android_id.len() != 16
             || !identity.android_id.bytes().all(|b| b.is_ascii_hexdigit())
             || identity.local_user.len() != 64
@@ -92,9 +104,7 @@ impl Identity {
             &h[20..]
         );
         let identity = Self {
-            description:
-                "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
-                    .into(),
+            description: ANDROID_CLIENT_INFO.into(),
             device_id,
             android_id: crypto::hex(
                 &crypto::random_bytes(8)

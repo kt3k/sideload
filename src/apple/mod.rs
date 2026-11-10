@@ -15,12 +15,18 @@ pub trait Transport {
     fn send(&mut self, request: &Request) -> NetResult<Response>;
 }
 pub struct Https(Client);
+// Published at https://www.apple.com/certificateauthority/AppleRootCA-G3.cer.
+// Android client-info can select gsd.apple.com, whose chain ends at this root.
+const APPLE_ROOT_G3: &[u8] = include_bytes!("certs/AppleRootCA-G3.cer");
 impl Https {
     pub fn new() -> Result<Self> {
         Ok(Self(
             Client::new(
                 concat!("sideload/", env!("CARGO_PKG_VERSION")),
-                &[crate::sign::apple_certs::ROOT_CA.to_vec()],
+                &[
+                    crate::sign::apple_certs::ROOT_CA.to_vec(),
+                    APPLE_ROOT_G3.to_vec(),
+                ],
             )
             .map_err(|_| {
                 Error::new(
@@ -127,5 +133,23 @@ mod debug_response_tests {
                 .count()
                 <= 1024
         );
+    }
+}
+
+#[cfg(test)]
+mod tls_root_tests {
+    #[test]
+    fn apple_g3_matches_the_published_fingerprint_and_parses_as_a_trust_anchor() {
+        assert_eq!(
+            crate::crypto::hex(&crate::crypto::sha256(super::APPLE_ROOT_G3)),
+            "63343abfb89a6a03ebb57e9b3f5fa7be7c4f5c756f3017b3a8c488c3653e9179"
+        );
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(rustls::pki_types::CertificateDer::from(
+                super::APPLE_ROOT_G3.to_vec(),
+            ))
+            .unwrap();
+        assert_eq!(roots.len(), 1);
     }
 }

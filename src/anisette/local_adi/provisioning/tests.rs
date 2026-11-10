@@ -43,6 +43,11 @@ impl Transport for Wire {
     fn send(&mut self, r: &Request) -> NetResult<Response> {
         self.calls += 1;
         assert!(r.headers.iter().any(|(k, _)| k == "X-Mme-Device-Id"));
+        assert!(
+            r.headers
+                .iter()
+                .any(|(k, v)| k == "X-Mme-Client-Info" && v == ANDROID_CLIENT_INFO)
+        );
         let response = if self.calls == 1 {
             Value::Dictionary(Dictionary::from_iter([(
                 "urls",
@@ -90,6 +95,7 @@ impl Transport for Wire {
 fn identity_reuse_provision_once_fresh_otps() {
     let d = WorkDir::create(false).unwrap();
     let id = Identity::load(d.path()).unwrap();
+    assert_eq!(id.description, ANDROID_CLIENT_INFO);
     assert_eq!(id.device_id, Identity::load(d.path()).unwrap().device_id);
     let mut engine = Native {
         ready: false,
@@ -139,4 +145,38 @@ fn malformed_identity_not_silently_replaced() {
     fs::write(d.path().join("device.json"), b"invalid").unwrap();
     assert!(Identity::load(d.path()).is_err());
     assert_eq!(fs::read(d.path().join("device.json")).unwrap(), b"invalid");
+}
+
+#[test]
+fn legacy_mac_label_is_corrected_without_resetting_saved_identity_or_state() {
+    let d = WorkDir::create(false).unwrap();
+    let original = Identity::load(d.path()).unwrap();
+    let path = d.path().join("device.json");
+    let saved = fs::read_to_string(&path).unwrap();
+    let legacy = saved.replace(ANDROID_CLIENT_INFO, LEGACY_MAC_CLIENT_INFO);
+    fs::write(&path, &legacy).unwrap();
+    fs::write(d.path().join("adi.pb"), b"existing provisioning fixture").unwrap();
+    let loaded = Identity::load(d.path()).unwrap();
+    assert_eq!(loaded.description, ANDROID_CLIENT_INFO);
+    assert_eq!(loaded.device_id, original.device_id);
+    assert_eq!(loaded.android_id, original.android_id);
+    assert_eq!(loaded.local_user, original.local_user);
+    assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+    assert_eq!(
+        fs::read(d.path().join("adi.pb")).unwrap(),
+        b"existing provisioning fixture"
+    );
+    let headers = loaded.headers().unwrap();
+    assert!(
+        headers
+            .iter()
+            .any(|(k, v)| k == "X-Mme-Client-Info" && v == ANDROID_CLIENT_INFO)
+    );
+
+    let custom = saved.replace(ANDROID_CLIENT_INFO, "custom-client-profile");
+    fs::write(&path, &custom).unwrap();
+    assert_eq!(
+        Identity::load(d.path()).unwrap().description,
+        "custom-client-profile"
+    );
 }

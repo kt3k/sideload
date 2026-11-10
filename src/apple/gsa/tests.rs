@@ -10,7 +10,10 @@ struct Anisette;
 impl AnisetteProvider for Anisette {
     fn headers(&mut self) -> Result<AnisetteData> {
         Ok(AnisetteData {
-            headers: vec![("X-Mme-Client-Info".into(), "fixture".into())],
+            headers: vec![(
+                "X-Mme-Client-Info".into(),
+                crate::anisette::local_adi::provisioning::ANDROID_CLIENT_INFO.into(),
+            )],
         })
     }
 }
@@ -97,6 +100,8 @@ impl Server {
 impl Transport for Wire {
     fn send(&mut self, r: &Request) -> NetResult<Response> {
         let mut s = self.0.borrow_mut();
+        assert!(r.headers.iter().any(|(k, v)| k == "X-Mme-Client-Info"
+            && v == crate::anisette::local_adi::provisioning::ANDROID_CLIENT_INFO));
         let p = if r.url == LOOKUP {
             dict([(
                 "urls",
@@ -129,6 +134,12 @@ impl Transport for Wire {
         } else {
             let body = plist::from_bytes(&r.body).unwrap();
             let req = body.get("Request").unwrap();
+            assert_eq!(
+                req.get("cpd")
+                    .and_then(|v| v.get("X-Mme-Client-Info"))
+                    .and_then(Value::as_str),
+                Some(crate::anisette::local_adi::provisioning::ANDROID_CLIENT_INFO)
+            );
             let op = string(req, "o").unwrap();
             s.operations.push(op.into());
             let response = match op {
