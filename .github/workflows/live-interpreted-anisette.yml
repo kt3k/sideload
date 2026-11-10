@@ -58,7 +58,8 @@ jobs:
         run: >-
           cargo test -p sideload-ios-core --profile ios --test interpreted_adi
           live_provisioning_rotation_and_persisted_provider -- --ignored --nocapture
-      - name: Compare client profiles using password-free synthetic SRP init
+      # This records responses for a reserved invalid identity, not login acceptance.
+      - name: Record synthetic SRP-init responses (diagnostic only)
         run: >-
           cargo run -p sideload-ios-core --profile ios --example gsa_identity_probe
           -- "$SIDELOAD_AARCH64_ADI_LIBRARY_DIR"

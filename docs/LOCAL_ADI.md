@@ -109,10 +109,15 @@ Created once, with random values, and then reused:
 
 | Field | Value |
 |---|---|
-| `serverFriendlyDescription` | `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>` (sent as `X-Mme-Client-Info`) |
+| `serverFriendlyDescription` | `<Android> <Android;14;UQ1A.240205.004> <com.apple.AuthKit/1 (com.apple.android.music/4.9.6)>` (sent as `X-Mme-Client-Info`) |
 | `uniqueDeviceIdentifier` | random UUID, uppercase (`X-Mme-Device-Id`) |
 | `adiIdentifier` | 8 random bytes as lowercase hex (16 characters), passed to SetAndroidID |
 | `localUserUUID` | 32 random bytes as uppercase hex (64 characters) (`X-Apple-I-MD-LU`) |
+
+The Android ADI backend must describe Android rather than native macOS. Older versions wrote a
+Mac label; loading that exact legacy default now corrects only the in-memory description. Saved
+UUIDs, Android identifier, local user ID and provisioning blobs are retained, and custom
+(non-default) descriptions are preserved. Native macOS AOSKit uses its own identity path.
 
 ## 5. Provisioning (once per machine)
 

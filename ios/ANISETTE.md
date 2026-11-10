@@ -130,3 +130,31 @@ Shortcuts while locked, interrupted setup and offline retry.
 Crash recovery for abandoned staging directories and multi-file transactional checkpoints are
 not implemented; files are committed atomically individually. Do not describe this backend as
 stable or enable it by default until these live/device checks pass.
+
+## Account sign-in diagnostics (-80045)
+
+Header generation is not an account sign-in test. On 2026-11-10 a real-device report showed
+Apple error `-80045` during login. The Android ADI identity previously advertised macOS; the
+same legacy label reproduces `-80045` during password-free SRP init with a reserved `.invalid`
+identity on both Linux and macOS ([diagnostic run](https://github.com/kt3k/sideload/actions/runs/42728198409)).
+A [related client-info correction](https://github.com/arxdeus/xcross/pull/127) reports the same
+mismatch. This is evidence of a protocol mismatch, not proof that it explains every rejection.
+
+The local backend now advertises Android. Existing default Mac labels are corrected in memory
+without deleting device IDs or provisioning. The HTTP headers remain strings, while GSA's CPD
+flags are plist booleans and routing info is a plist integer. Apple's published G3 root is also
+trusted for Android-selected authentication hosts; TLS verification remains enabled.
+
+The reserved invalid identity still received HTTP 403 with the corrected profile and typed CPD.
+That diagnostic cannot establish whether an actual account will be accepted. The probe stops
+after SRP init: it sends no password, M1 proof or 2FA request, and logs no headers or challenge
+values. It is deliberately a diagnostic command rather than a successful-login assertion:
+
+```sh
+cargo run -p sideload-ios-core --profile ios --example gsa_identity_probe -- \
+  /path/to/official/arm64-v8a
+```
+
+`Check Anisette` continues to mean generation/provisioning only. Actual iOS account sign-in
+with the corrected build remains unverified. Do not treat successful provisioning or a completed
+diagnostic probe as a confirmed fix for account-side authentication errors.

@@ -65,7 +65,7 @@ struct SettingsView: View {
                     Text("Anisette")
                 } footer: {
                     if anisetteMode == "local" {
-                        Text("Experimental. Generates Apple's device identification data on this device. Initial setup downloads Apple components and contacts Apple. Keep this app open for the first check. Your Apple ID and password are not needed for this check.")
+                        Text("Experimental. Generates Apple's device identification data on this device. Initial setup downloads Apple components and contacts Apple. Keep this app open for the first check. This verifies data generation, not Apple account sign-in. Your Apple ID and password are not needed for this check.")
                     } else {
                         Text("An anisette server is a third party that generates Apple's device identification data for logging in. It does not receive your password. Local failures never switch to a remote server automatically.")
                     }
